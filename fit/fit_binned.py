@@ -1,3 +1,4 @@
+
 from scipy.optimize import curve_fit
 from scipy.stats import binned_statistic
 from datetime import datetime
@@ -74,8 +75,7 @@ class fit_data:
         bin_centers = (bin_edges[:-1] + bin_edges[1:])/2
 
         valid_bins = ~np.isnan(bins) & ~np.isnan(bin_centers) #? filter out bins with NaN or Inf values
-        bin_centers = bin_centers[valid_bins]
-        bins = bins[valid_bins]
+        bin_centers, bins, sem = bin_centers[valid_bins], bins[valid_bins], sem[valid_bins]
 
         return bins, bin_centers, sem
 
@@ -86,37 +86,39 @@ class fit_data:
         t = np.array([val.timestamp() for val in time]) #* converts datetime to a unix timestamp
 
         #! initial values to fit
-        mean, std, std2 = 0, np.std(rms), np.std(rms)
-        phase, phase2 = 0, 0.5
-        amp, amp2 = std/np.sqrt(2), 0.001
+        a, mean = 0, 0
+        phase, phase2 = 0, 0
+        amp, amp2 = np.std(rms)/np.sqrt(2), 0.001
         sidereal_freq = 1/(23*60*60 + 56*60 + 4.092) #* sidereal freq
         solar_freq = 1/(24*60*60) #* solar freq
 
-        def fit_function(t, amp, phase, amp2, phase2, mean):
-            return amp * np.sin(2 * np.pi * sidereal_freq * t + phase) + amp2 * np.sin(2 * np.pi * solar_freq * t + phase2) + mean
+        def fit_function(t, amp, phase, amp2, phase2, a, mean):
+            return amp * np.sin(2 * np.pi * sidereal_freq * t + phase) + amp2 * np.sin(2 * np.pi * solar_freq * t + phase2) + a*t + mean
 
-        initial_guess = [amp, phase, amp2, phase2, mean]
-        param_bounds=([0, -np.inf, 0, -np.inf, -np.inf],[np.inf, np.inf, np.inf, np.inf, np.inf])
-        bins, bin_centers, _ = self.bin_data(t, rms) #* bin before fitting
+        initial_guess = [amp, phase, amp2, phase2, a, mean]
+        param_bounds = ([0, -np.inf, 0, -np.inf, -np.inf, -np.inf],[np.inf, np.inf, np.inf, np.inf, np.inf, np.inf])
+        bins, bin_centers, sem = self.bin_data(t, rms) #* bin before fitting
         popt, pcov = curve_fit(fit_function, bin_centers, bins, p0=initial_guess, bounds=param_bounds)
 
         perr = np.sqrt(np.diag(pcov)) #* std of the fit params
-        amp, phase, amp2, phase2, mean = popt #* fit values
-        amp_std, phase_std, amp2_std, phase2_std, mean_std = perr #* std of fit values
+        amp, phase, amp2, phase2, a, mean = popt #* fit values
+        amp_std, phase_std, amp2_std, phase2_std, a_std, mean_std = perr #* std of fit values
+        fit = fit_function(t, *popt)
 
-        print(f'Chi-squared: {self.chi_squared(rms, fit_function(t, *popt), std):.3f}')
-        print(f'SEM: {std/len(rms):.3f}')
+        print(f'Chi-squared: {self.chi_squared(rms, fit_function(t, *popt), np.std(fit)):.3f}')
+        print(f'SEM: {np.std(fit)/len(fit):.3f}')
 
         print('Parameters:')
         print(f'A_1: {amp:.3f} ± {amp_std:.3f}')
         print(f'phi_1: {phase:.3f} ± {phase_std:.3f}')
-        print(f'mean: {mean:.3f} ± {mean_std:.3f}')
         print(f'A_2: {amp2:.3f} ± {amp2_std:.3f}')
         print(f'phi_2: {phase2:.3f} ± {phase2_std:.3f}')
-        return fit_function(t, *popt), bins #* final fit
+        print(f'a: {a:.3f} ± {a_std:.3f}')
+        print(f'mean: {mean:.3f} ± {mean_std:.3f}')
+        return fit, bins, bin_centers, sem #* final fit
 
 
-    def plot_fit(self, ax, time, data_fit, bins, **kwargs):
+    def plot_fit(self, ax, time, data_fit, **kwargs):
         ax.plot_date(time, data_fit, **kwargs)
 
     def plot_pol(self, ax, ant_i, chan_i):
@@ -131,12 +133,15 @@ class fit_data:
         start_time, end_time = self.init_time, self.final_time
         mask = (time >= start_time) & (time <= end_time)
         time, rms_cent, average_rms = time[mask], rms_cent[mask], average_rms[mask]
-        data_fit, bins = self.fit_sin(time, average_rms)
+        data_fit, bins, bin_centers, sem = self.fit_sin(time, average_rms)
 
-        ax.plot_date(time, rms_cent, fmt=',', c=color[chan_i], alpha=0.1, label=f'Ant. {ant_i+1}, Pol. {chan_i}')
-        ax.plot_date(time, average_rms, fmt=':', alpha=0.7, c=color2[chan_i], label=f'Moving avg Ant. {ant_i+1}, Ch. {chan_i+1}')
+        #ax.plot_date(time, rms_cent, fmt=',', c=color[chan_i], alpha=0.5, label=f'Ant. {ant_i+1}, Pol. {chan_i}')
+        ax.plot_date(time, average_rms, fmt=',', c=color2[chan_i], label=f'Moving avg Ant. {ant_i+1}, Ch. {chan_i+1}')
 
-        self.plot_fit(ax, time, data_fit, bins, lw=2, fmt='--', label=f'Fit rms Ant. {ant_i+1}, Ch. {chan_i+1}', c=color3[chan_i])
+        std = np.std(data_fit)
+        self.plot_fit(ax, time, data_fit, lw=1.4, fmt='--', label=f'Fit rms Ant. {ant_i+1}, Ch. {chan_i+1}', c=color3[chan_i])
+        ax.fill_between(time, data_fit-std, data_fit+std, alpha=0.5, color=color3[chan_i])
+
         mse = np.mean((average_rms-data_fit)**2)
         print(f'mse: {mse:.3f}')
 
@@ -150,13 +155,15 @@ class fit_data:
             ax = fig.add_subplot(spec[ant_i])
             for chan_i in range(self.pol):
                 self.plot_pol(ax, ant_i, chan_i)
+            #self.plot_pol(ax, ant_i, 0)
             ax.set_ylabel('RMS')
             ax.set_ylim(-4,8)
+            #ax.set_xlim(datetime(2023, 5, 5), datetime(2023, 5, 6))
             plt.legend(loc='upper left')
             plt.setp(ax.get_xticklabels(), visible=True)
             plt.suptitle(f'Using {self.stat}', fontsize=18, y=0.95)
 
-        plt.savefig(f'fit_{self.stat}.png')
+        plt.savefig(f'fit_{self.stat}_binned.png')
         plt.close()
 
 

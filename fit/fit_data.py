@@ -59,41 +59,41 @@ class fit_data:
         self.dataframe = self.dataframe.loc[self.dataframe['time'] > init_time]
         self.dataframe = self.dataframe.loc[self.dataframe['time'] < final_time]
 
-    def get_chi_squared(self, data_fit, rms):
-        chi_squared = np.sum(((data_fit - rms) / data_fit) ** 2)
-        red_chi_squared = chi_squared/(len(rms)-4)
-        return red_chi_squared
+    def chi_squared(self, y_obs, y_fit, sigma):
+        return np.sum(((y_fit-y_obs)/sigma)**2)/(len(y_obs)-5)
 
     def fit_sin(self, time, rms):
         t = np.array([val.timestamp() for val in time]) #* converts datetime to a unix timestamp
 
         #! initial values to fit
-        mean, std, std2 = 0, np.std(rms), np.std(rms)
+        a, mean, = 0, 0
         phase, phase2 = 0, 0.5
-        amp, amp2 = std/np.sqrt(2), 0.001
+        amp, amp2 = np.std(rms)/np.sqrt(2), 0.001
         sidereal_freq = 1/(23*60*60 + 56*60 + 4.092) #* sidereal freq
         solar_freq = 1/(24*60*60) #* solar freq
 
-        def fit_function(t, amp, phase, amp2, phase2, mean):
-            return amp * np.sin(2 * np.pi * sidereal_freq * t + phase) + amp2 * np.sin(2 * np.pi * solar_freq * t + phase2) + mean
+        def fit_function(t, amp, phase, amp2, phase2, a, mean):
+            return amp * np.sin(2 * np.pi * sidereal_freq * t + phase) + amp2 * np.sin(2 * np.pi * solar_freq * t + phase2) + a*t + mean
 
-        initial_guess = [amp, phase, amp2, phase2, mean]
-        param_bounds=([0, -np.inf, 0, -np.inf, -np.inf],[np.inf, np.inf, np.inf, np.inf, np.inf])
+        initial_guess = [amp, phase, amp2, phase2, a, mean]
+        param_bounds=([0, -np.inf, 0, -np.inf, -np.inf, -np.inf],[np.inf, np.inf, np.inf, np.inf, np.inf, np.inf])
         popt, pcov = curve_fit(fit_function, t, rms, p0=initial_guess, bounds=param_bounds)
 
         perr = np.sqrt(np.diag(pcov)) #* std of the fit params
-        amp, phase, amp2, phase2, mean = popt #* fit values
-        amp_std, phase_std, amp2_std, phase2_std, mean_std = perr #* std of fit values
+        amp, phase, amp2, phase2, a, mean = popt #* fit values
+        amp_std, phase_std, amp2_std, phase2_std, a_std, mean_std = perr #* std of fit values
+        data_fit = fit_function(t, *popt) #* final fit
 
-        data_fit = fit_function(t, amp, phase, amp2, phase2, mean) #* final fit
-        red_chi_squared = self.get_chi_squared(data_fit, rms)
-        print(f'Reduced chi-squared: {red_chi_squared}')
+        print(f'Chi-squared: {self.chi_squared(rms, fit_function(t, *popt), np.std(data_fit)):.3f}')
+        print(f'SEM: {np.std(data_fit)/len(data_fit):.3f}')
+
         print('Parameters:')
-        print(f'A_1: {round(amp, 3)} ± {round(amp_std, 3)}')
-        print(f'phi_1: {round(phase, 3)} ± {round(phase_std, 3)}')
-        print(f'mean: {round(mean, 3)} ± {round(mean_std, 3)}')
-        print(f'A_2: {round(amp2, 3)} ± {round(amp2_std, 3)}')
-        print(f'phi_2: {round(phase2, 3)} ± {round(phase2_std, 3)}')
+        print(f'A_1: {amp:.3f} ± {amp_std:.3f}')
+        print(f'phi_1: {phase:.3f} ± {phase_std:.3f}')
+        print(f'A_2: {amp2:.3f} ± {amp2_std:.3f}')
+        print(f'phi_2: {phase2:.3f} ± {phase2_std:.3f}')
+        print(f'a: {a:.3f} ± {a_std:.3f}')
+        print(f'mean: {mean:.3f} ± {mean_std:.3f}')
         return data_fit
 
 
@@ -101,22 +101,26 @@ class fit_data:
         ax.plot_date(time, data_fit, **kwargs)
 
     def plot_pol(self, ax, ant_i, chan_i):
-        color, color2, color3 = ['y', 'c'], ['tab:green', 'tab:blue'], ['darkgreen', 'blue']
+        color, color2, color3 = ['y', 'c'], ['mediumseagreen', 'cornflowerblue'], ['darkgreen', 'navy']
         id_i = f'{ant_i+1}{chan_i}'
         print(f'\n- Ant. {ant_i+1}, Pol. {chan_i+1}')
 
         average_rms = self.dataframe['average'+id_i] - np.mean(self.dataframe['average'+id_i]) #? center data
         time = self.dataframe['time']
         rms_cent = self.dataframe['rms'+id_i] - np.mean(self.dataframe['rms'+id_i])
-        ax.plot_date(time, rms_cent, fmt=',', c=color[chan_i], alpha=0.5, label=f'Ant. {ant_i+1}, Pol. {chan_i}')
+
+        #ax.plot_date(time, rms_cent, fmt=',', c=color[chan_i], alpha=0.5, label=f'Ant. {ant_i+1}, Pol. {chan_i}')
         ax.plot_date(time, average_rms, fmt=',', c=color2[chan_i], alpha=0.4, label=f'Moving avg Ant. {ant_i+1}, Ch. {chan_i+1}')
 
-        data_fit = self.fit_sin(time, rms_cent)
         start_time, end_time = self.init_time, self.final_time
         mask = (time >= start_time) & (time <= end_time)
-        time, rms_cent, data_fit, average_rms = time[mask], rms_cent[mask], data_fit[mask], average_rms[mask]
+        time, rms_cent, average_rms = time[mask], rms_cent[mask], average_rms[mask]
+        data_fit = self.fit_sin(time, average_rms)
 
-        self.plot_fit(ax, time, data_fit, lw=1, fmt='--', label=f'Fit rms Ant. {ant_i+1}, Ch. {chan_i+1}', c=color3[chan_i])
+        self.plot_fit(ax, time, data_fit, lw=1.4, fmt='--', label=f'Fit rms Ant. {ant_i+1}, Ch. {chan_i+1}', c=color3[chan_i])
+        std = np.std(data_fit)
+        ax.fill_between(time, data_fit-std, data_fit+std, alpha=0.5, color=color3[chan_i])
+
         mse = np.mean((average_rms - data_fit) ** 2)
         print(f'mse: {round(mse,3)}')
 
@@ -135,16 +139,16 @@ class fit_data:
             plt.legend(loc='upper left')
             plt.setp(ax.get_xticklabels(), visible=True)
 
-        plt.savefig('fit.png')
+        plt.savefig('fit_aging.png')
         plt.close()
 
 
 filename = 'GalOscillation_Deconvolved_140-190.npz'
+startTime = '2023-05-05'
+endTime = '2023-05-15'
 fit = fit_data(filename)
 fit.process_data()
-year1 = "2023"
-year2 = "2023"
-startTime = '{0}-05-05'.format(year1)
-endTime = '{0}-05-15'.format(year2)
+startTime = '2023-05-05'
+endTime = '2023-05-15'
 fit.set_window_time(startTime, endTime)
 fit.plot_rms()
