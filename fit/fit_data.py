@@ -2,6 +2,7 @@ from scipy.optimize import curve_fit
 from datetime import datetime
 import pandas as pd
 import numpy as np
+import argparse
 
 from astropy.visualization import astropy_mpl_style, quantity_support
 import matplotlib.gridspec as gridspec
@@ -118,8 +119,8 @@ class fit_data:
         data_fit = self.fit_sin(time, average_rms)
 
         self.plot_fit(ax, time, data_fit, lw=1.4, fmt='--', label=f'Fit rms Ant. {ant_i+1}, Ch. {chan_i+1}', c=color3[chan_i])
-        std = np.std(data_fit)
-        ax.fill_between(time, data_fit-std, data_fit+std, alpha=0.5, color=color3[chan_i])
+        sem = np.std(data_fit)/len(data_fit)
+        ax.errorbar(time, data_fit, yerr=sem, fmt ='o', markersize=1, label=f'SEM Ant. {ant_i+1}, Ch. {chan_i+1}', ecolor=color3[chan_i], markeredgecolor=color3[chan_i], markerfacecolor=color3[chan_i])
 
         mse = np.mean((average_rms - data_fit) ** 2)
         print(f'mse: {round(mse,3)}')
@@ -135,20 +136,21 @@ class fit_data:
             for chan_i in range(self.pol):
                 self.plot_pol(ax, ant_i, chan_i)
             ax.set_ylabel('RMS')
-            ax.set_ylim(-4,8)
+            ax.set_ylim(-2,2)
             plt.legend(loc='upper left')
             plt.setp(ax.get_xticklabels(), visible=True)
 
-        plt.savefig('fit_aging.png')
+        plt.savefig('../plots/fit_aging.png')
         plt.close()
 
 
-filename = 'GalOscillation_Deconvolved_140-190.npz'
-startTime = '2023-05-05'
-endTime = '2023-05-15'
-fit = fit_data(filename)
+parser = argparse.ArgumentParser()
+parser.add_argument('--file', type=str, help='.npz file name', required=False, default='GalOscillation_Deconvolved_140-190.npz')
+parser.add_argument('--init_time', type=str, help='initial time -> y-m-d', required=False, default='2023-05-05')
+parser.add_argument('--final_time', type=str, help='final time -> y-m-d', required=False, default='2023-05-15')
+args = parser.parse_args()
+
+fit = fit_data(args.file)
 fit.process_data()
-startTime = '2023-05-05'
-endTime = '2023-05-15'
-fit.set_window_time(startTime, endTime)
+fit.set_window_time(args.init_time, args.final_time)
 fit.plot_rms()

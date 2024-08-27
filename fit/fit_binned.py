@@ -1,10 +1,12 @@
 
 from scipy.optimize import curve_fit
 from scipy.stats import binned_statistic
+from scipy.signal import savgol_filter
 from datetime import datetime
 import pandas as pd
 import numpy as np
 import logging
+import argparse
 
 from astropy.visualization import astropy_mpl_style, quantity_support
 import matplotlib.gridspec as gridspec
@@ -25,7 +27,7 @@ class fit_data:
         self.stat = stat
         self.dataframe = pd.DataFrame() #* create dataframe to make easier column operations
         self.read_npz(filename) #* read compressed numpy files
-        logging.basicConfig( filename='fit.log', level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        logging.basicConfig(filename='fit.log', level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
         self.logger = logging.getLogger('fit')
         print(f'-> Reading {filename.split("_")[2][:-4]} MHz')
 
@@ -70,13 +72,8 @@ class fit_data:
         std, _, _ = binned_statistic(time, rms, statistic='std', bins=bins)
         n, _, _ = binned_statistic(time, rms, statistic='count', bins=bins)
         sem = std/np.sqrt(n)
-
         bins, bin_edges, _ = binned_statistic(time, rms, statistic=self.stat, bins=bins)
         bin_centers = (bin_edges[:-1] + bin_edges[1:])/2
-
-        valid_bins = ~np.isnan(bins) & ~np.isnan(bin_centers) #? filter out bins with NaN or Inf values
-        bin_centers, bins, sem = bin_centers[valid_bins], bins[valid_bins], sem[valid_bins]
-
         return bins, bin_centers, sem
 
     def chi_squared(self, y_obs, y_fit, sigma):
@@ -98,12 +95,17 @@ class fit_data:
         initial_guess = [amp, phase, amp2, phase2, a, mean]
         param_bounds = ([0, -np.inf, 0, -np.inf, -np.inf, -np.inf],[np.inf, np.inf, np.inf, np.inf, np.inf, np.inf])
         bins, bin_centers, sem = self.bin_data(t, rms) #* bin before fitting
-        popt, pcov = curve_fit(fit_function, bin_centers, bins, p0=initial_guess, bounds=param_bounds)
 
+        valid_bins = ~np.isnan(bins) & ~np.isnan(bin_centers) #? filter out bins with NaN or Inf values
+        fit_bin_centers, fit_bins = bin_centers[valid_bins], bins[valid_bins]
+
+        popt, pcov = curve_fit(fit_function, fit_bin_centers, fit_bins, p0=initial_guess, bounds=param_bounds)
         perr = np.sqrt(np.diag(pcov)) #* std of the fit params
         amp, phase, amp2, phase2, a, mean = popt #* fit values
         amp_std, phase_std, amp2_std, phase2_std, a_std, mean_std = perr #* std of fit values
-        fit = fit_function(t, *popt)
+        fit = fit_function(bin_centers, *popt)
+        self.logger.info({'stat':self.stat, 'A1':amp, 'phi1':phase, 'A2':amp2, 'phi2':phase2, 'a':a, 'mean':mean})
+        self.logger.info({'stat':self.stat, 'A1_std':amp_std, 'phi1_std':phase_std, 'A2_std':amp2_std, 'phi2_std':phase2_std, 'a_std':a_std, 'mean_std':mean_std})
 
         print(f'Chi-squared: {self.chi_squared(rms, fit_function(t, *popt), np.std(fit)):.3f}')
         print(f'SEM: {np.std(fit)/len(fit):.3f}')
@@ -115,7 +117,8 @@ class fit_data:
         print(f'phi_2: {phase2:.3f} ± {phase2_std:.3f}')
         print(f'a: {a:.3f} ± {a_std:.3f}')
         print(f'mean: {mean:.3f} ± {mean_std:.3f}')
-        return fit, bins, bin_centers, sem #* final fit
+
+        return fit, bin_centers, sem #* final fit
 
 
     def plot_fit(self, ax, time, data_fit, **kwargs):
@@ -133,17 +136,18 @@ class fit_data:
         start_time, end_time = self.init_time, self.final_time
         mask = (time >= start_time) & (time <= end_time)
         time, rms_cent, average_rms = time[mask], rms_cent[mask], average_rms[mask]
-        data_fit, bins, bin_centers, sem = self.fit_sin(time, average_rms)
 
-        #ax.plot_date(time, rms_cent, fmt=',', c=color[chan_i], alpha=0.5, label=f'Ant. {ant_i+1}, Pol. {chan_i}')
+        data_fit, bin_centers, sem = self.fit_sin(time, average_rms)
+
+        ax.plot_date(time, rms_cent, fmt=',', c=color[chan_i], alpha=0.5, label=f'Ant. {ant_i+1}, Pol. {chan_i}')
         ax.plot_date(time, average_rms, fmt=',', c=color2[chan_i], label=f'Moving avg Ant. {ant_i+1}, Ch. {chan_i+1}')
 
-        std = np.std(data_fit)
-        self.plot_fit(ax, time, data_fit, lw=1.4, fmt='--', label=f'Fit rms Ant. {ant_i+1}, Ch. {chan_i+1}', c=color3[chan_i])
-        ax.fill_between(time, data_fit-std, data_fit+std, alpha=0.5, color=color3[chan_i])
+        bin_centers_dates = [datetime.fromtimestamp(tc) for tc in bin_centers]
+        self.plot_fit(ax, bin_centers_dates, data_fit, lw=1.4, fmt='--', label=f'Fit rms Ant. {ant_i+1}, Ch. {chan_i+1}', c=color3[chan_i])
+        ax.errorbar(bin_centers_dates, data_fit, yerr=sem, fmt ='o', label=f'SEM Ant. {ant_i+1}, Ch. {chan_i+1}', ecolor=color3[chan_i], markeredgecolor=color3[chan_i], markerfacecolor=color3[chan_i])
 
-        mse = np.mean((average_rms-data_fit)**2)
-        print(f'mse: {mse:.3f}')
+        #mse = np.mean((average_rms-data_fit)**2)
+        #print(f'mse: {mse:.3f}')
 
 
     def plot_rms(self):
@@ -155,25 +159,26 @@ class fit_data:
             ax = fig.add_subplot(spec[ant_i])
             for chan_i in range(self.pol):
                 self.plot_pol(ax, ant_i, chan_i)
-            #self.plot_pol(ax, ant_i, 0)
+
             ax.set_ylabel('RMS')
             ax.set_ylim(-4,8)
-            #ax.set_xlim(datetime(2023, 5, 5), datetime(2023, 5, 6))
             plt.legend(loc='upper left')
             plt.setp(ax.get_xticklabels(), visible=True)
             plt.suptitle(f'Using {self.stat}', fontsize=18, y=0.95)
 
-        plt.savefig(f'fit_{self.stat}_binned.png')
+        plt.savefig(f'../plots/fit_{self.stat}_binned.png')
         plt.close()
 
 
-filename = 'GalOscillation_Deconvolved_140-190.npz'
-startTime = '2023-05-05'
-endTime = '2023-05-15'
-for stat in ['mean', 'median']:
-    fit = fit_data(filename, stat)
-    fit.process_data()
-    startTime = '2023-05-05'
-    endTime = '2023-05-15'
-    fit.set_window_time(startTime, endTime)
-    fit.plot_rms()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--file', type=str, help='.npz file name', required=False, default='GalOscillation_Deconvolved_140-190.npz')
+parser.add_argument('--stat', type=str, help='mean or median', required=False, default='mean')
+parser.add_argument('--init_time', type=str, help='initial time -> d/m/y', required=False, default='05/05/2023')
+parser.add_argument('--final_time', type=str, help='final time -> d/m/y', required=False, default='15/05/2023')
+args = parser.parse_args()
+
+fit = fit_data(args.file, args.stat)
+fit.process_data()
+fit.set_window_time(args.init_time, args.final_time)
+fit.plot_rms()
