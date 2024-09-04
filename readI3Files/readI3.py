@@ -18,7 +18,7 @@ from icecube.icetray import I3Units
 from icecube import astro
 
 # from utils import spectrum
-# python readI3.py -stD "10" -stM "03" -enD "20" -enM "03" -y "2024"
+# python readI3.py -stD "01" -stM "01" -enD "20" -enM "02" -y "2024"
 
 parser = argparse.ArgumentParser(description='Read I3 files')
 parser.add_argument('--startDay','-stD', help='Day',required=True)
@@ -36,7 +36,7 @@ parser.add_argument('--getEnvelope','-gE', help='Function to get Envelope',defau
 args = parser.parse_args()
 
 #====== Frequency Bands ======
-bands = [[100,300]]#[[70,90],[110,130],[140,190]]
+bands = [[70,150],[150,250],[250,350]]
 
 #=== Check Dates ===
 def is_after(date1, date2):
@@ -66,8 +66,6 @@ def list_files_between_months(start_date, end_date, directory=baseLoc):
     ]
     assert len(filtered_files) > 0, f"No files found between {start_date} and {end_date} OR the filenames format is incorrectly called."
     print(f'Found {len(filtered_files)} files between {start_date} and {end_date}')
-
-    #! Mod the date selection
     return filtered_files
 input_files = list_files_between_months(f'{args.year}-{args.startMonth}-{args.startDay}', f'{args.year}-{args.endMonth}-{args.endDay}')
 
