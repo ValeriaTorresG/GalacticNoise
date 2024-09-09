@@ -1,6 +1,5 @@
 from scipy.stats import binned_statistic
-from scipy.optimize import curve_fit
-from scipy.optimize import leastsq
+from scipy.optimize import curve_fit, leastsq, least_squares
 from astropy import units as u
 from datetime import datetime
 import pandas as pd
@@ -21,7 +20,7 @@ plt.rcParams['figure.dpi'] = 360
 plt.style.use(astropy_mpl_style)
 quantity_support()
 
-#python fit_binned_sid.py -f GalOscillation_Time_2024_01_05-2024_01_26_Freq_70-150.npz -ini 2024-01-05 -fin 2024-01-09
+# python fit_binned_sid.py -f GalOscillation_Time_2024_01_05-2024_01_26_Freq_70-150.npz -ini 2024-01-05 -fin 2024-01-09
 
 class fit_data:
 
@@ -99,9 +98,7 @@ class fit_data:
 
 
     def bin_data(self, time, rms):
-        delta = datetime.strptime(self.final_time, "%Y-%m-%d") - datetime.strptime(self.init_time, "%Y-%m-%d")
-        bins = delta.days*100
-        bins, bin_edges, _ = binned_statistic(time, rms, statistic=self.stat, bins=bins)
+        bins, bin_edges, _ = binned_statistic(time, rms, statistic='median', bins=bins)
         bin_centers = (bin_edges[:-1] + bin_edges[1:])/2
         mask = np.abs(bins)<3 & ~np.isnan(bins)
         bin_centers, bins = bin_centers[mask], bins[mask]
@@ -122,9 +119,9 @@ class fit_data:
         guess_amp = guess_std/np.sqrt(2)
 
         bin_centers = np.asarray(bin_centers)
-        data_first_guess = guess_std * np.sin(t * guess_freq + guess_phase) + guess_mean
+        data_first_guess = guess_std * np.sin(2 * np.pi * guess_freq * t + guess_phase) + guess_mean
 
-        def optimize_func(x): return x[0] * np.sin(x[1] * bin_centers + x[2]) + x[3] - bins
+        def optimize_func(x): return x[0] * np.sin(2 * np.pi * x[1] * bin_centers + x[2]) + x[3] - bins
         est_amp, est_freq, est_phase, est_mean = leastsq(optimize_func, [guess_amp, guess_freq, guess_phase, guess_mean], maxfev=100000)[0]
 
         data_fit = est_amp * np.sin(est_freq * bin_centers + est_phase) + est_mean
@@ -135,8 +132,7 @@ class fit_data:
         return bin_centers, data_fit, param
 
 
-    def plot_pol(self, ax, ant_i, chan_i):
-        color, color2, color3 = ['y', 'c'], ['mediumseagreen', 'cornflowerblue'], ['darkgreen', 'navy']
+    def plot_pol(self, ax, ant_i):
         id_i = f'{ant_i+1}{chan_i}'
         print(f'\n- Ant. {ant_i+1}, Pol. {chan_i+1}')
 
@@ -148,7 +144,6 @@ class fit_data:
         unique_days = pd.to_datetime(self.dataframe['time']).dt.date.unique()
         cmap = sns.color_palette("mako_r", as_cmap=True)
         colors = cmap(np.linspace(0.2, 0.8, len(unique_days)))
-        l_styles = ['-', '--', '-.', ':']
         for i, day in enumerate(unique_days):
             day_mask = pd.to_datetime(self.dataframe['time']).dt.date == day
             day_sidereal_times = sidereal_times[day_mask]
@@ -158,7 +153,7 @@ class fit_data:
             ax.scatter(day_sidereal_times, day_rms_cent, alpha=0.7, s=0.6, color=colors[i])
             ax.scatter(day_sidereal_times, day_average_rms, color=colors[i], s=1.5, alpha=0.4)
             x_interpolated, y_interpolated, _ = self.fit_sin(time_i, day_average_rms, ant_i, chan_i)
-            ax.plot(x_interpolated, y_interpolated, lw=3.5, ls=l_styles[i], label=f'{day}', color=colors[i])
+            ax.plot(x_interpolated, y_interpolated, lw=2.0, label=f'{day}', color=colors[i])
 
         x_interpolated, y_interpolated, param = self.fit_sin(time, average_rms, ant_i, chan_i)
         sem = np.std(y_interpolated)/np.sqrt(len(y_interpolated))
@@ -168,17 +163,17 @@ class fit_data:
         x = self.get_sidereal_time(time)
         y = self.bin_data(x, average_rms)
         print(param)
-        print(f'mse: {np.mean((y-y_interpolated)**2)}')
-        print(f'Chi-squared: {self.chi_squared(y, y_interpolated, np.std(y_interpolated)):.3f}')
+        #print(f'mse: {np.mean((y-y_interpolated)**2)}')
+        #print(f'Chi-squared: {self.chi_squared(y, y_interpolated, np.std(y_interpolated)):.3f}')
 
 
     def plot_rms(self):
-        for chan_i in range(self.pol):
+        for chan_i in range(1):
             print(f'\nPolarisation {chan_i+1}')
             fig = plt.figure(figsize=[25, 16])
             fig.tight_layout(pad=1)
             spec = gridspec.GridSpec(ncols=1, nrows=3)
-            for ant_i in range(self.ant):
+            for ant_i in range(1,2):
                 ax = fig.add_subplot(spec[ant_i])
                 self.plot_pol(ax, ant_i, chan_i)
                 ax.set_xlabel('Sidereal time')
@@ -187,7 +182,8 @@ class fit_data:
                 plt.legend(loc='upper left')
                 plt.setp(ax.get_xticklabels(), visible=True)
             plt.suptitle(f'Polarisation {chan_i+1}, frequency band: {self.freq} MHz\n From {self.init_time} to {self.final_time}\nBinned using {self.stat}', fontsize=18, y=0.95)
-            plt.savefig(f'../plots/plots_icecube/fit_pol{chan_i+1}_{self.stat}_{self.use_time}_{self.init_time}_{self.final_time}_{self.freq}.png', dpi=360)
+            #plt.savefig(f'../plots/plots_icecube/fit_pol{chan_i+1}_{self.stat}_{self.use_time}_{self.init_time}_{self.final_time}_{self.freq}.png', dpi=360)
+            plt.savefig(f'plot_{chan_i+1}_2.png', dpi=360)
             plt.close()
         self.logger.info('-')
 
