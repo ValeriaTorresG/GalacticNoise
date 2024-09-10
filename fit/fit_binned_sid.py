@@ -163,10 +163,7 @@ class fit_data:
           # Add regularization term (L2 norm of the parameters)
           reg_term = lambda_reg * np.sum(np.square(params))
           return residuals + reg_term
-      
-      # est_amp, est_freq, est_phase, est_mean = leastsq(optimize_func, [guess_amp, guess_freq, guess_phase, guess_mean])[0]
-      # # Perform the least squares optimization
-      # params, cov, infodict, errmsg, ier = leastsq(optimize_func, [guess_amp, guess_freq, guess_phase, guess_mean], full_output=True)
+
       lambda_reg = 0.1  # Regularization parameter
       params, cov, infodict, mesg, ier = leastsq(
                                             residuals,
