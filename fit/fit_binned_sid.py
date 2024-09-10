@@ -16,8 +16,10 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib
+import emcee
+
 matplotlib.rcParams['text.usetex'] = False
-plt.rcParams['figure.dpi'] = 360
+plt.rcParams['figure.dpi'] = 150
 plt.style.use(astropy_mpl_style)
 quantity_support()
 
@@ -119,7 +121,7 @@ class fit_data:
 
 
     def bin_data(self, time, rms):
-        bins, bin_edges, _ = binned_statistic(time, rms, statistic='median', bins=100)
+        bins, bin_edges, _ = binned_statistic(time, rms, statistic='median', bins=1000)
         bin_centers = (bin_edges[:-1] + bin_edges[1:])/2
         mask = np.abs(bins)<3 & ~np.isnan(bins)
         bin_centers, bins = bin_centers[mask], bins[mask]
@@ -131,30 +133,49 @@ class fit_data:
 
 
     def fit_sin(self, time, rms, ant_i, chan_i):
-        t = self.get_sidereal_time(time)
 
-        bins, bin_centers = self.bin_data(t, rms)
+      t = self.get_sidereal_time(time)
 
-        guess_mean, guess_std = np.mean(bins),  np.std(bins)
-        guess_phase, guess_freq = 1.0, 0.00002314814 * 6
-        guess_amp = guess_std/np.sqrt(2)
+      bins, bin_centers = self.bin_data(t, rms)
 
-        bin_centers = np.asarray(bin_centers)
-        data_first_guess = guess_std * np.sin(2 * np.pi * guess_freq * t + guess_phase) + guess_mean
+      guess_mean, guess_std = np.mean(bins),  np.std(bins)
+      guess_phase, guess_freq = 1.0, 0.00002314814 * 6
+      guess_amp = guess_std/np.sqrt(2)
 
-        def optimize_func(x): return x[0] * np.sin(2 * np.pi * x[1] * bin_centers + x[2]) + x[3] - bins
-        est_amp, est_freq, est_phase, est_mean = leastsq(optimize_func, [guess_amp, guess_freq, guess_phase, guess_mean])[0]
+      bin_centers = np.asarray(bin_centers)
+      data_first_guess = guess_std * np.sin(2 * np.pi * guess_freq * t + guess_phase) + guess_mean
 
-        
-        data_fit = est_amp * np.sin(est_freq * bin_centers + est_phase) + est_mean
-        param = f'A: {est_amp:.3f}\nf: {est_freq*60*60*24:.3f}, {1/est_freq:.3f}\nphi: {est_phase:.3f}, {np.rad2deg(est_phase%(np.pi)):.3f} deg\nmean: {est_mean:.3f}'
-        self.logger.info({'freq':self.freqBand, 'time':self.timeType, 'ant':ant_i, 'pol':chan_i, 'init_time':self.init_time, 'final_time':self.final_time, 'stat':self.runStatType})
-        self.logger.info({'amp':est_amp, 'freq':est_freq, 'phase':est_phase, 'mean':est_mean})
+      def optimize_func(x): 
+        return x[0] * np.sin(2 * np.pi * x[1] * bin_centers + x[2]) + x[3] - bins
+      # est_amp, est_freq, est_phase, est_mean = leastsq(optimize_func, [guess_amp, guess_freq, guess_phase, guess_mean])[0]
+      
+      # Perform the least squares optimization
+      params, cov, infodict, errmsg, ier = leastsq(optimize_func, [guess_amp, guess_freq, guess_phase, guess_mean], full_output=True)
 
-        return bin_centers, data_fit, param
+      # Extract the parameters
+      est_amp, est_freq, est_phase, est_mean = params
+
+      # Calculate the errors (standard deviation) from the covariance matrix
+      if cov is not None:
+          errors = np.sqrt(np.diag(cov))
+          err_amp, err_freq, err_phase, err_mean = errors
+      else:
+          print("Covariance matrix could not be estimated")
+          err_amp, err_freq, err_phase, err_mean = np.nan, np.nan, np.nan, np.nan
+
+      # Print the results
+      print(f"Fitted parameters: Amp={est_amp}, Freq={est_freq}, Time={1/est_freq} , Phase={est_phase}, Mean={est_mean}")
+      print(f"Parameter uncertainties: dAmp={err_amp}, dFreq={err_freq}, dTime={err_freq/(est_freq**2)} , dPhase={err_phase}, dMean={err_mean}")
+      
+      data_fit = est_amp * np.sin(est_freq * bin_centers + est_phase) + est_mean
+      # param = f'A: {est_amp:.3f}\nf: {est_freq*60*60*24:.3f}, {1/est_freq:.3f}\nphi: {est_phase:.3f}, {np.rad2deg(est_phase%(np.pi)):.3f} deg\nmean: {est_mean:.3f}'
+      # self.logger.info({'freq':self.freqBand, 'time':self.timeType, 'ant':ant_i, 'pol':chan_i, 'init_time':self.init_time, 'final_time':self.final_time, 'stat':self.runStatType})
+      # self.logger.info({'amp':est_amp, 'freq':est_freq, 'phase':est_phase, 'mean':est_mean})
+
+      return bin_centers, data_fit, param
 
 
-    def plot_pol(self,dataFrame, ax, ant_i,chan_i, doUniqueDays=None):
+    def plot_pol(self,dataFrame, ax, ant_i,chan_i, fitUniqueDays=None):
         id_i = f'{ant_i}{chan_i}'
         print(f'\n- Ant. {ant_i}, Pol. {chan_i}')
 
@@ -174,20 +195,20 @@ class fit_data:
             day_average_rms = average_rms[day_mask]
             ax.scatter(day_sidereal_times, day_rms_cent, alpha=0.7, s=0.6, color=colors[i])
             ax.scatter(day_sidereal_times, day_average_rms, color=colors[i], s=1.5, alpha=0.4)
-            if doUniqueDays:
+            if fitUniqueDays=='True':
+              print(f'Fitting unique day {day}')
               x_interpolated, y_interpolated, _ = self.fit_sin(time_i, day_average_rms, ant_i, chan_i)
               ax.plot(x_interpolated, y_interpolated, lw=2.0, label=f'{day}', color=colors[i])
             else:
               pass
 
-        x_interpolated, y_interpolated, param = self.fit_sin(time, average_rms, ant_i, chan_i)
+        x_interpolated, y_interpolated = self.fit_sin(time, average_rms, ant_i, chan_i)
         sem = np.std(y_interpolated)/np.sqrt(len(y_interpolated))
         ax.plot(x_interpolated, y_interpolated, lw=4.5, label=f'Fit rms Ant. {ant_i+1}, Ch. {chan_i+1}', c='black')
         ax.errorbar(x_interpolated, y_interpolated, yerr=sem, markersize=3.0, fmt ='o', ecolor='black', markeredgecolor='black', markerfacecolor='black')
 
         x = self.get_sidereal_time(time)
         y = self.bin_data(x, average_rms)
-        print(param)
         #print(f'mse: {np.mean((y-y_interpolated)**2)}')
         #print(f'Chi-squared: {self.chi_squared(y, y_interpolated, np.std(y_interpolated)):.3f}')
 
@@ -218,10 +239,13 @@ class fit_data:
         
       # plt.setp(ax.get_xticklabels(), visible=True)
       plt.suptitle(f'Polarisation {chan_i+1}, frequency band: {self.freqBand} MHz\n From {self.init_time} to {self.final_time}\nBinned using {self.runStatType}', fontsize=18, y=0.95)
-      plt.savefig(f'plot_{chan_i+1}_2.png', dpi=360)
+      plt.savefig(f'plot2.png', dpi=360)
       plt.close()
       self.logger.info('-')
 
+    def do_MCMC():
+        two_pi = 2 * np.pi
+        pass #TODO implement MCMC
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--file', '-f', type=str, help='.npz file name', required=True)
@@ -229,7 +253,7 @@ parser.add_argument('--stat', '-st', type=str, help='mean or median', required=F
 parser.add_argument('--init_time', '-ini', type=str, help='initial time -> YYYY-MM-DD', required=False)
 parser.add_argument('--final_time', '-fin', type=str, help='final time -> YYYY-MM-DD', required=False)
 parser.add_argument('--use_time', '-t', type=str, help='sid or utc', required=False, default='sid')
-parser.add_argument('--fitUniqDays', '-fUD', type=bool, help='Fit unique days', required=True, default=False)
+parser.add_argument('--fitUniqDays', '-fUD', type=str, help='Fit unique days', required=True)
 args = parser.parse_args()
 
 if not args.init_time or not args.final_time:
