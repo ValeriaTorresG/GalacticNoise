@@ -297,5 +297,5 @@ df = fit.process_data()
 
 #=== Plotting ===
 print("=== Plotting ===")
-fit.plot_rms(dataFrame=df,plotAll=True,ant_ch_List=[[1,1],[2,1]], fitUniqueDays=args.fitUniqDays)
+fit.plot_rms(dataFrame=df,plotAll=False,ant_ch_List=[[1,1],[2,1]], fitUniqueDays=args.fitUniqDays)
 print(f'{"-"*10}> time elapsed: {(time.time()-init)/60:.3f} min')
