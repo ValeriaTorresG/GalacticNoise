@@ -84,7 +84,7 @@ class fit_data:
     def get_moving_avg(self, dataFrame): #* calc moving avg using rolling
         for _ in self.id_list:
           if self.runStatType == 'mean':
-            dataFrame['average'+_] = dataFrame[_].rolling(self.window, win_type="gaussian").mean()
+            dataFrame['average'+_] = dataFrame[_].rolling(self.window, win_type="gaussian").mean(std=3)
           elif self.runStatType == 'median':
             dataFrame['average'+_] = dataFrame[_].rolling(self.window).median()
           else:
@@ -121,11 +121,15 @@ class fit_data:
 
 
     def bin_data(self, time, rms):
-        bins, bin_edges, _ = binned_statistic(time, rms, statistic='median', bins=1000)
+        bins, bin_edges, _ = binned_statistic(time, rms, statistic='median', bins=24)
         bin_centers = (bin_edges[:-1] + bin_edges[1:])/2
-        mask = np.abs(bins)<3 & ~np.isnan(bins)
-        bin_centers, bins = bin_centers[mask], bins[mask]
-        return bins, bin_centers
+        bin_std , _, _ = binned_statistic(time, rms, statistic='std', bins=24)
+        bin_counts, _, _ = binned_statistic(time, rms, statistic='count', bins=24)
+        sem = bin_std/np.sqrt(bin_counts)
+        mask =  ~np.isnan(bins)
+        bin_centers, bins, sem = bin_centers[mask], bins[mask], sem[mask]
+        print(f'Number of bins: {len(bins)}')
+        return bins, bin_centers, sem
 
 
     def chi_squared(self, y_obs, y_fit, sigma):
@@ -136,7 +140,7 @@ class fit_data:
 
       t = self.get_sidereal_time(time)
 
-      bins, bin_centers = self.bin_data(t, rms)
+      bins, bin_centers, sem_vals = self.bin_data(t, rms)
 
       guess_mean, guess_std = np.mean(bins),  np.std(bins)
       guess_phase, guess_freq = 1.0, 0.00002314814 * 6
@@ -145,12 +149,27 @@ class fit_data:
       bin_centers = np.asarray(bin_centers)
       data_first_guess = guess_std * np.sin(2 * np.pi * guess_freq * t + guess_phase) + guess_mean
 
-      def optimize_func(x): 
-        return x[0] * np.sin(2 * np.pi * x[1] * bin_centers + x[2]) + x[3] - bins
-      # est_amp, est_freq, est_phase, est_mean = leastsq(optimize_func, [guess_amp, guess_freq, guess_phase, guess_mean])[0]
+      def optimize_func(x_bins, params): 
+        return params[0] * np.sin(2 * np.pi * params[1] * x_bins + params[2]) + params[3] 
       
-      # Perform the least squares optimization
-      params, cov, infodict, errmsg, ier = leastsq(optimize_func, [guess_amp, guess_freq, guess_phase, guess_mean], full_output=True)
+      # Define the residuals function with regularization
+      def residuals(params, x, y, sigma, lambda_reg):
+          model_vals = optimize_func(x, params)
+          residuals = (y - model_vals) / sigma
+          # Add regularization term (L2 norm of the parameters)
+          reg_term = lambda_reg * np.sum(np.square(params))
+          return residuals + reg_term
+      
+      # est_amp, est_freq, est_phase, est_mean = leastsq(optimize_func, [guess_amp, guess_freq, guess_phase, guess_mean])[0]
+      # # Perform the least squares optimization
+      # params, cov, infodict, errmsg, ier = leastsq(optimize_func, [guess_amp, guess_freq, guess_phase, guess_mean], full_output=True)
+      lambda_reg = 0.1  # Regularization parameter
+      params, cov, infodict, mesg, ier = leastsq(
+                                            residuals,
+                                            [guess_amp, guess_freq, guess_phase, guess_mean],
+                                            args=(bin_centers, bins, sem_vals, lambda_reg),
+                                            full_output=True
+                                        )
 
       # Extract the parameters
       est_amp, est_freq, est_phase, est_mean = params
@@ -249,7 +268,7 @@ class fit_data:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--file', '-f', type=str, help='.npz file name', required=True)
-parser.add_argument('--stat', '-st', type=str, help='mean or median', required=False, default='median')
+parser.add_argument('--stat', '-st', type=str, help='mean or median', required=False, default='mean')
 parser.add_argument('--init_time', '-ini', type=str, help='initial time -> YYYY-MM-DD', required=False)
 parser.add_argument('--final_time', '-fin', type=str, help='final time -> YYYY-MM-DD', required=False)
 parser.add_argument('--use_time', '-t', type=str, help='sid or utc', required=False, default='sid')
