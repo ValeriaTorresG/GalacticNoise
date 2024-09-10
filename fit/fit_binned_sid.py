@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib
 import emcee
+from matplotlib.colors import ListedColormap
 
 matplotlib.rcParams['text.usetex'] = False
 plt.rcParams['figure.dpi'] = 150
@@ -121,10 +122,10 @@ class fit_data:
 
 
     def bin_data(self, time, rms):
-        bins, bin_edges, _ = binned_statistic(time, rms, statistic='median', bins=24)
+        bins, bin_edges, _ = binned_statistic(time, rms, statistic='median', bins=50)
         bin_centers = (bin_edges[:-1] + bin_edges[1:])/2
-        bin_std , _, _ = binned_statistic(time, rms, statistic='std', bins=24)
-        bin_counts, _, _ = binned_statistic(time, rms, statistic='count', bins=24)
+        bin_std , _, _ = binned_statistic(time, rms, statistic='std', bins=50)
+        bin_counts, _, _ = binned_statistic(time, rms, statistic='count', bins=50)
         sem = bin_std/np.sqrt(bin_counts)
         mask =  ~np.isnan(bins)
         bin_centers, bins, sem = bin_centers[mask], bins[mask], sem[mask]
@@ -136,11 +137,14 @@ class fit_data:
         return np.sum(((y_fit-y_obs)/sigma)**2)/(len(y_obs)-3)
 
 
-    def fit_sin(self, time, rms, ant_i, chan_i):
+    def fit_sin(self, time, rms, ax,color):
 
       t = self.get_sidereal_time(time)
 
       bins, bin_centers, sem_vals = self.bin_data(t, rms)
+      ax.errorbar(bin_centers,bins, yerr=sem_vals, markersize=10.0, 
+                  fmt ='o', ecolor=color, markeredgecolor=color, markerfacecolor=color)
+      
 
       guess_mean, guess_std = np.mean(bins),  np.std(bins)
       guess_phase, guess_freq = 1.0, 0.00002314814 * 6
@@ -186,12 +190,12 @@ class fit_data:
       print(f"Fitted parameters: Amp={est_amp}, Freq={est_freq}, Time={1/est_freq} , Phase={est_phase}, Mean={est_mean}")
       print(f"Parameter uncertainties: dAmp={err_amp}, dFreq={err_freq}, dTime={err_freq/(est_freq**2)} , dPhase={err_phase}, dMean={err_mean}")
       
-      data_fit = est_amp * np.sin(est_freq * bin_centers + est_phase) + est_mean
+      data_fit = est_amp * np.sin(2 * np.pi*est_freq * bin_centers + est_phase) + est_mean
       # param = f'A: {est_amp:.3f}\nf: {est_freq*60*60*24:.3f}, {1/est_freq:.3f}\nphi: {est_phase:.3f}, {np.rad2deg(est_phase%(np.pi)):.3f} deg\nmean: {est_mean:.3f}'
       # self.logger.info({'freq':self.freqBand, 'time':self.timeType, 'ant':ant_i, 'pol':chan_i, 'init_time':self.init_time, 'final_time':self.final_time, 'stat':self.runStatType})
       # self.logger.info({'amp':est_amp, 'freq':est_freq, 'phase':est_phase, 'mean':est_mean})
 
-      return bin_centers, data_fit
+      return bin_centers, data_fit , ax
 
 
     def plot_pol(self,dataFrame, ax, ant_i,chan_i, fitUniqueDays=None):
@@ -204,27 +208,35 @@ class fit_data:
 
         sidereal_times = np.array([self.get_sidereal_time(t) for t in time])
         unique_days = pd.to_datetime(dataFrame['time']).dt.date.unique()
-        cmap = sns.color_palette("mako_r", as_cmap=True)
-        colors = cmap(np.linspace(0.2, 0.8, len(unique_days)))
+        
+        # Define a colormap with 5 discrete colors
+        cmap = ListedColormap(plt.cm.viridis(np.linspace(0, 1, len(unique_days))))
+                
         for i, day in enumerate(unique_days):
             day_mask = pd.to_datetime(dataFrame['time']).dt.date == day
             day_sidereal_times = sidereal_times[day_mask]
             time_i = time[day_mask]
             day_rms_cent = rms_cent[day_mask]
             day_average_rms = average_rms[day_mask]
-            ax.scatter(day_sidereal_times, day_rms_cent, alpha=0.7, s=0.6, color=colors[i])
-            ax.scatter(day_sidereal_times, day_average_rms, color=colors[i], s=1.5, alpha=0.4)
+            # ax.scatter(day_sidereal_times, day_rms_cent, alpha=0.7, s=0.6, color=colors[i])
+            # ax.scatter(day_sidereal_times, day_average_rms, color=cmap(i / (len(unique_days)-1)), s=1.5, alpha=0.4)
+            color=cmap(i / (len(unique_days)-1))
             if fitUniqueDays=='True':
               print(f'Fitting unique day {day}')
-              x_interpolated, y_interpolated, _ = self.fit_sin(time_i, day_average_rms, ant_i, chan_i)
-              ax.plot(x_interpolated, y_interpolated, lw=2.0, label=f'{day}', color=colors[i])
+              x_interpolated, y_interpolated, _ = self.fit_sin(time_i, day_average_rms, 
+                                                              ax,color=color)
+              # ax.plot(x_interpolated, y_interpolated, lw=2.0, label=f'{day}', color=cmap(i / (len(unique_days)-1)))
             else:
-              pass
+              # Only plot the average
+              bins, bin_centers, sem_vals = self.bin_data(self.get_sidereal_time(time_i), day_average_rms)
+              ax.errorbar( bin_centers, bins, yerr=sem_vals, markersize=10.0, 
+                          fmt ='o', ecolor=color, 
+                          markeredgecolor=color, markerfacecolor=color,alpha=0.4)
+              plt.savefig(f'plot_{ant_i}_{chan_i}.png', dpi=360)
 
-        x_interpolated, y_interpolated = self.fit_sin(time, average_rms, ant_i, chan_i)
-        sem = np.std(y_interpolated)/np.sqrt(len(y_interpolated))
+        x_interpolated, y_interpolated , ax = self.fit_sin(time, average_rms, ax, color='red')
         ax.plot(x_interpolated, y_interpolated, lw=4.5, label=f'Fit rms Ant. {ant_i+1}, Ch. {chan_i+1}', c='black')
-        ax.errorbar(x_interpolated, y_interpolated, yerr=sem, markersize=3.0, fmt ='o', ecolor='black', markeredgecolor='black', markerfacecolor='black')
+        # ax.errorbar(x_interpolated, y_interpolated, yerr=sem, markersize=3.0, fmt ='o', ecolor='black', markeredgecolor='black', markerfacecolor='black')
 
         x = self.get_sidereal_time(time)
         y = self.bin_data(x, average_rms)
@@ -297,5 +309,5 @@ df = fit.process_data()
 
 #=== Plotting ===
 print("=== Plotting ===")
-fit.plot_rms(dataFrame=df,plotAll=False,ant_ch_List=[[1,1],[2,1]], fitUniqueDays=args.fitUniqDays)
+fit.plot_rms(dataFrame=df,plotAll=True,ant_ch_List=[[1,1],[2,1]], fitUniqueDays=args.fitUniqDays)
 print(f'{"-"*10}> time elapsed: {(time.time()-init)/60:.3f} min')
