@@ -172,7 +172,7 @@ class fit_data:
       # self.logger.info({'freq':self.freqBand, 'time':self.timeType, 'ant':ant_i, 'pol':chan_i, 'init_time':self.init_time, 'final_time':self.final_time, 'stat':self.runStatType})
       # self.logger.info({'amp':est_amp, 'freq':est_freq, 'phase':est_phase, 'mean':est_mean})
 
-      return bin_centers, data_fit, param
+      return bin_centers, data_fit
 
 
     def plot_pol(self,dataFrame, ax, ant_i,chan_i, fitUniqueDays=None):
