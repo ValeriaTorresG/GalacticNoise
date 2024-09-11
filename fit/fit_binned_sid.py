@@ -226,7 +226,7 @@ class fit_data:
             else:
               # Only plot the average
               bins, bin_centers, sem_vals = self.bin_data(self.get_sidereal_time(time_i), day_average_rms)
-              ax.errorbar( bin_centers, bins, yerr=sem_vals, markersize=10.0, 
+              ax.errorbar( bin_centers, bins, yerr=sem_vals, markersize=3.0, 
                           fmt ='o', ecolor=color, 
                           markeredgecolor=color, markerfacecolor=color,alpha=0.4)
               plt.savefig(f'plot_{ant_i}_{chan_i}.png', dpi=360)
@@ -251,19 +251,22 @@ class fit_data:
         print(f'Plotting all antennas and polarisations: {plotList}')
       unqAntID = np.unique(np.array(plotList)[:,0])
       #=== Initiate a Figure ===
-      if len(unqAntID) == 1:numRows = len(unqAntID)+1# A fake row to avoid errors
-      else : numRows = len(unqAntID)  
-      fig, axs = plt.subplots(numRows,1, figsize=[25, 16], sharex=True)
-      if len(unqAntID) > 1:axs = axs.ravel()
+      numRows = len(unqAntID)  
+      fig, axs = plt.subplots(numRows,2, figsize=[25, 16], sharex=True, sharey=True)
+      # if len(unqAntID) > 1:axs = axs.ravel()
       for ant_i in unqAntID:
           corresChans = [_[1] for _ in plotList if _[0] == ant_i]
           for chan_i in corresChans:
-            self.plot_pol(dataFrame, axs[ant_i-1], ant_i, chan_i,fitUniqueDays)
+            self.plot_pol(dataFrame, axs[ant_i-1,chan_i-1], ant_i, chan_i,fitUniqueDays)
       
-      axs[len(unqAntID)-1].set_xlabel('Sidereal time')
-      for ax in axs:
-        ax.set_ylabel('RMS') ; ax.set_ylim(-2,2)
-        plt.legend(fontsize=15)
+      axs[len(unqAntID)-1,0].set_xlabel('Sidereal time'); axs[len(unqAntID)-1,1].set_xlabel('Sidereal time')
+      # Set Y lims for all plots
+      for ax in axs.ravel():
+          ax.set_ylabel('RMS'); ax.set_ylim(-2,2)
+          plt.legend(fontsize=15)
+  #   for ax in axs:
+#        ax.set_ylabel('RMS') ; ax.set_ylim(-2,2)
+#        plt.legend(fontsize=15)
         
       # plt.setp(ax.get_xticklabels(), visible=True)
       plt.suptitle(f'Polarisation {chan_i+1}, frequency band: {self.freqBand} MHz\n From {self.init_time} to {self.final_time}\nBinned using {self.runStatType}', fontsize=18, y=0.95)
@@ -302,7 +305,7 @@ fit = fit_data(filename = fileLoc, runStatType = args.stat,
                final_time=final_time, freqBand = args.file.split('_')[-1][:-4])
 df = fit.process_data()
 # For Bigger Files Maybe you want to save the processed data
-#df.to_hdf(f'SOME_LOC', key='df', mode='w')
+df.to_hdf(f'/data/user/valeriatorres/galactic_noise/SouthPole/byParas/{args.init_time}_{args.final_time}.h5', key='df', mode='w')
 
 #=== Plotting ===
 print("=== Plotting ===")
