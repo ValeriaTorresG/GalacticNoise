@@ -18,14 +18,14 @@ from icecube.icetray import I3Units
 from icecube import astro
 
 # from utils import spectrum
-# python readI3.py -stD "16" -stM "02" -enD "27" -enM "02" -y "2024"
+# python readI3.py -stD "01" -stM "01" -enD "30" -enM "05" -y "2024"
 
 parser = argparse.ArgumentParser(description='Read I3 files')
-parser.add_argument('--startDay','-stD', help='Day',required=True)
-parser.add_argument('--startMonth','-stM', help='Month',required=True)
-parser.add_argument('--endDay','-enD', help='Day',required=True)
-parser.add_argument('--endMonth','-enM', help='Month',required=True)
-parser.add_argument('--year','-y', help='Year',required=True)
+parser.add_argument('--startDay','-stD', type=str, help='Day',required=True)
+parser.add_argument('--startMonth','-stM', type=str, help='Month',required=True)
+parser.add_argument('--endDay','-enD', type=str, help='Day',required=True)
+parser.add_argument('--endMonth','-enM', type=str, help='Month',required=True)
+parser.add_argument('--year','-y', type=str, help='Year',required=True)
 #=== Pulse Selection ===
 parser.add_argument('--traceBins','-tb', type=int, help='Number of Bins in Time-trace',default=1024)
 parser.add_argument('--triggerMode','-tM', help='Trigger Mode',default='noncascaded')
@@ -67,7 +67,7 @@ def list_files_between_months(start_date, end_date, directory=baseLoc):
     assert len(filtered_files) > 0, f"No files found between {start_date} and {end_date} OR the filenames format is incorrectly called."
     print(f'Found {len(filtered_files)} files between {start_date} and {end_date}')
     return filtered_files
-input_files = list_files_between_months(f'{args.year}-{args.startMonth}-{args.startDay}', f'{args.year}-{args.endMonth}-{args.endDay}')[:-2]
+input_files = list_files_between_months(f'{args.year}-{args.startMonth}-{args.startDay}', f'{args.year}-{args.endMonth}-{args.endDay}')
 
 #========= Clean Your Barn =========
 def getSiderialTime(frame):
@@ -81,6 +81,7 @@ def filterFrames(frame):
     if trigger_info["soft_flag"]:
         return True
     return False
+
 # Choose the Triggering Mode - Another kind of filter
 def chooseTriggerMode(frame,mode):
     traceLength = frame['RadioTraceLength'].value
@@ -122,22 +123,27 @@ class GalacticBackground(icetray.I3Module):
         print("... I am starting")
 
     def RunForOneFrame(self, frame):
-        time = frame["RadioTaxiTime"]
-        time_new = np.datetime64(time.date_time).astype(datetime)
-        self.timeOutput.append(time_new)
+        try:
+            time = frame["RadioTaxiTime"]
+            time_new = np.datetime64(time.date_time).astype(datetime)
+            self.timeOutput.append(time_new)
 
-        antennaDataMap = frame[self.inputName]
-        rmsTraces = []
-        for iant, antkey in enumerate(antennaDataMap.keys()):
-            channelMap = antennaDataMap[antkey]
-            antenna_polarization_data = []
-            for ichan, chkey in enumerate(channelMap.keys()):
-                fft = channelMap[ichan].GetFFTData()
-                timeSeries = fft.GetTimeSeries()
-                noises = cutTraces(timeSeries, lengthSubTraces=64)
-                rms_value = np.mean(noises[:10])
-                self.baselineRms.append(rms_value)
-        # self.siderialTime.append(getSiderialTime(frame))
+            antennaDataMap = frame[self.inputName]
+            rmsTraces = []
+            for iant, antkey in enumerate(antennaDataMap.keys()):
+                channelMap = antennaDataMap[antkey]
+                antenna_polarization_data = []
+                for ichan, chkey in enumerate(channelMap.keys()):
+                    fft = channelMap[ichan].GetFFTData()
+                    timeSeries = fft.GetTimeSeries()
+                    noises = cutTraces(timeSeries, lengthSubTraces=64)
+                    rms_value = np.mean(noises[:10])
+                    self.baselineRms.append(rms_value)
+            # self.siderialTime.append(getSiderialTime(frame))
+        except Exception as e:
+            print(f'frame error: {e}')
+        return
+    
 
     def DAQ(self, frame):
         if self.applyinDAQ:
@@ -148,23 +154,26 @@ class GalacticBackground(icetray.I3Module):
             self.RunForOneFrame(frame)
 
     def Finish(self):
-        timeOutput = np.asarray(self.timeOutput)
-        baselineRms = np.asarray(self.baselineRms)
-        # Reshape baselineRms to have dimensions (self.counts, 3, 2)
-        baselineRms_reshaped = baselineRms.reshape(-1, 3, 2)
-        siderialTime = self.siderialTime
-        # Save the data
-        np.savez(self.output,
-                time=timeOutput,
-                # Extract data for each antenna and polarization
-                rms10 = baselineRms_reshaped[:, 0, 0],
-                rms11 = baselineRms_reshaped[:, 0, 1],
-                rms20 = baselineRms_reshaped[:, 1, 0],
-                rms21 = baselineRms_reshaped[:, 1, 1],
-                rms30 = baselineRms_reshaped[:, 2, 0],
-                rms31 = baselineRms_reshaped[:, 2, 1],
-                #siderialTime=siderialTime
-                )
+        try:
+            timeOutput = np.asarray(self.timeOutput)
+            baselineRms = np.asarray(self.baselineRms)
+            # Reshape baselineRms to have dimensions (self.counts, 3, 2)
+            baselineRms_reshaped = baselineRms.reshape(-1, 3, 2)
+            siderialTime = self.siderialTime
+            # Save the data
+            np.savez(self.output,
+                    time=timeOutput,
+                    # Extract data for each antenna and polarization
+                    rms10 = baselineRms_reshaped[:, 0, 0],
+                    rms11 = baselineRms_reshaped[:, 0, 1],
+                    rms20 = baselineRms_reshaped[:, 1, 0],
+                    rms21 = baselineRms_reshaped[:, 1, 1],
+                    rms30 = baselineRms_reshaped[:, 2, 0],
+                    rms31 = baselineRms_reshaped[:, 2, 1],
+                    #siderialTime=siderialTime
+                    )
+        except Exception as e:
+            print(f'rms error: {e}')
 
 
 #===== Run the Horse =====

@@ -47,10 +47,6 @@ class fit_data:
                 std = np.std(rms)
                 self.dataframe = self.dataframe[(rms - mean) <= threshold * std]
 
-                # self.dataframe = self.dataframe[abs((rms - mean)) <= 5]
-                # plt.plot_date( self.dataframe['time'], self.dataframe[id_i])
-                # plt.savefig("GOD_SEND.png")
-                
     def process_data(self):
         self.to_dataframe()
         self.clean_data()
@@ -85,7 +81,6 @@ class fit_data:
         self.dataframe = self.dataframe.loc[self.dataframe['time'] < final_time]
 
     def bin_data(self, time, rms):
-        #print(self.final_time)
         delta = datetime.strptime(self.final_time, "%Y-%m-%d") - datetime.strptime(self.init_time, "%Y-%m-%d")
         bins = delta.days*100
         #? now use sem instead of std
@@ -94,18 +89,6 @@ class fit_data:
         sem = std/np.sqrt(n)
         bins, bin_edges, _ = binned_statistic(time, rms, statistic=self.stat, bins=bins)
         bin_centers = (bin_edges[:-1] + bin_edges[1:])/2
-        
-        #plt.plot_date([datetime.fromtimestamp(tc) for tc in bin_centers], bins)
-        #plt.savefig("GOD_SEND.png")
-        
-        
-        with open('output.txt', 'w', newline='') as file:
-            file.write(str(list(std)))
-            #file.write(str(list(bins)))
-            #file.write(str(list(bin_centers)))
-            # for v1, v2 in zip(bin_centers, bins):
-            #     writer.writerow([v1, v2])'''
-
         return bins, bin_centers, sem
 
     def chi_squared(self, y_obs, y_fit, sigma):
@@ -125,19 +108,16 @@ class fit_data:
         if fit_freq:
             def fit_function(t, amp, freq_sid, phase, amp2, freq_sol, phase2, mean):
                 return amp * np.sin(2 * np.pi * freq_sid * t + phase) + amp2 * np.sin(2 * np.pi * freq_sol * t + phase2) + mean
-        
         else:
             def fit_function(t,amp,phase,amp2, phase2, mean,A,B):
                 return amp * np.sin(2 * np.pi * freq_sid * t*A + phase) + amp2 * np.sin(2 * np.pi * freq_sol * t*B + phase2) + mean
-        
         if fit_freq:
             initial_guess = [amp, freq_sid, phase, amp2, freq_sol, phase2, mean]
             param_bounds = ([0.0, -np.inf, 0.0, 0.0, -np.inf, 0.0, -np.inf],[np.inf, np.inf, 2.0, np.inf, 2.0, np.inf, np.inf])
-            
         else:
             initial_guess = [amp,phase, amp2, phase2, mean,1,1]
             param_bounds = ([0.0, -np.inf, 0.0, -np.inf,  -np.inf,0,0],[10000, 10000, 10000, 10000,10000,10000,10000])
-            
+
         bins, bin_centers, sem = self.bin_data(t, rms) #* bin before fitting
 
         valid_bins = ~np.isnan(bins) & ~np.isnan(bin_centers) & ~np.isnan(sem) #? filter out bins with NaN or Inf values
@@ -145,18 +125,17 @@ class fit_data:
 
         popt, pcov = curve_fit(fit_function, fit_bin_centers, fit_bins, p0=initial_guess, bounds=param_bounds)#, sigma=sem, maxfev=10000)
         perr = np.sqrt(np.diag(pcov)) #* std of the fit params
+
         if fit_freq:
             amp, freq_sid, phase, amp2, freq_sol, phase2, mean = popt #* fit values
             amp_std, freq_sid_std, phase_std, amp2_std, freq_sol_std, phase2_std, mean_std = perr #* std of fit values
-            
         else:
             amp, phase, amp2, phase2, mean,A,B = popt
             amp_std, phase_std, amp2_std, phase2_std, mean_std,A_,B_ = perr #* std of fit values
             freq_sid_std , freq_sol_std = None, None
             print(A,B)
-            
-        fit = fit_function(bin_centers, *popt)
 
+        fit = fit_function(bin_centers, *popt)
         #self.logger.info({'freq':self.freq, 'ant':ant_i, 'pol':chan_i, 'init_time':self.init_time, 'final_time':self.final_time, 'stat':self.stat})
         #self.logger.info({'A1':amp, 'phi1':phase, 'A2':amp2, 'phi2':phase2, 'mean':mean})
         #self.logger.info({'A1_std':amp_std, 'phi1_std':phase_std, 'A2_std':amp2_std, 'phi2_std':phase2_std, 'mean_std':mean_std})
@@ -198,7 +177,7 @@ class fit_data:
         self.plot_fit(ax, bin_centers_dates, data_fit, lw=1.4, fmt='--', label=f'Fit rms Ant. {ant_i+1}, Ch. {chan_i+1}', c=color3[chan_i])
         #ax.errorbar(bin_centers_dates, data_fit, yerr=sem, markersize=1.0, fmt ='o', label=f'SEM Ant. {ant_i+1}, Ch. {chan_i+1}', ecolor=color3[chan_i], markeredgecolor=color3[chan_i], markerfacecolor=color3[chan_i])
         ax.plot_date(hehe, meme, c='black', fmt='o', lw=1.1)
-        
+
         t = np.array([val.timestamp() for val in time])
         x = self.bin_data(t, average_rms)[0]-data_fit
         mse = np.mean((x[~np.isnan(x)])**2)
