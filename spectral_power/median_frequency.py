@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from icecube.icetray import I3Units
 from icecube.taxi_reader import taxi_tools
 from icecube.icetray import I3Tray
@@ -14,12 +16,13 @@ import sys
 import argparse
 
 
-#Input i3 file with the data
-'''parser = argparse.ArgumentParser()
+'''#Input i3 file with the data
+parser = argparse.ArgumentParser()
 parser.add_argument("input", type=str, nargs="+", default=[], help="List of i3 files")
 args = parser.parse_args()
 
 filename = args.input'''
+
 def get_i3_files(base_path='/mnt/ceph1-npx/user/valeriatorres/galactic_noise/SouthPole/i3_files', init='processed_'):
     files_list = []
     for root, dirs, files in os.walk(base_path):
@@ -30,12 +33,9 @@ def get_i3_files(base_path='/mnt/ceph1-npx/user/valeriatorres/galactic_noise/Sou
 filename = get_i3_files()
 print(filename)
 
-#Input i3 file with the data
-
-#Set the trace length
 WaveformLengths = [1024]
 
-# This class take the spectrum average over all the Q frames
+# This cla'ss take the spectrum average over all the Q frames
 class AnalyzeQframes(icetray.I3Module):
     def __init__(self, ctx):
         icetray.I3Module.__init__(self, ctx)
@@ -46,7 +46,7 @@ class AnalyzeQframes(icetray.I3Module):
         self.channel_averages = {}  # Dictionary to store the average spectrum for each channel
 
     def SpectrumAverage(self, frame, name):
-        if frame.Has('ArtifactsRemoved'):
+        if frame.Has("MedFilteredMap"):
             antennaDataMap = frame[name]  # This is a container that holds all antenna info
             for iant, antkey in enumerate(antennaDataMap.keys()):
                 channelMap = antennaDataMap[antkey]
@@ -70,17 +70,17 @@ class AnalyzeQframes(icetray.I3Module):
                     self.channel_averages[(iant, ichan)]['NEntries'] += 1
 
     def Physics(self, frame):
-        self.SpectrumAverage(frame, "ArtifactsRemoved")
+        self.SpectrumAverage(frame, "MedFilteredMap")
 
     def Finish(self):
-        plt.figure(figsize=(20, 15))
         cmap = sns.color_palette("mako_r", as_cmap=True)
         color_map = cmap(np.linspace(0.2, 0.8, 3))
+        plt.figure(figsize=(20, 15))
         for iant in range(3):
             for ichan in range(2):
                 channel_data = self.channel_averages[(iant, ichan)]
-                avg_freqs = channel_data['sumFreqs'] / channel_data['NEntries']
-                avg_dBm = channel_data['sumdBm'] / channel_data['NEntries']
+                avg_freqs = channel_data['sumFreqs']#/channel_data['NEntries']
+                avg_dBm = channel_data['sumdBm']#/channel_data['NEntries']
                 # Create a subplot for the current antenna
                 plt.subplot(3, 1, iant+1)
                 plt.plot(avg_freqs/ I3Units.megahertz, avg_dBm, label=f"Antenna {iant+1}, Channel {ichan+1}", color=color_map[ichan])
@@ -91,10 +91,10 @@ class AnalyzeQframes(icetray.I3Module):
                 plt.xticks(x_ticks)
                 plt.title(f"Spectral Average - Antenna {iant+1}")
                 plt.ylabel("Spectral power [dBm/Hz]")
+                plt.legend()
 
         plt.xlabel("Frequency [MHz]")
-        plt.legend()
-        plt.savefig("spect_one_day.png")
+        plt.savefig("spec_median_one_day.png")
 
 init_time = time.time()
 tray = I3Tray()
@@ -124,21 +124,25 @@ def select_TraceLength(frame):
 tray.Add(select_TraceLength, "select_TraceLength",
          streams=[icetray.I3Frame.DAQ])
 
-# Removing TAXI artifacts
-'''tray.Add(
-    radcube.modules.RemoveTAXIArtifacts, "ArtifactRemover",
-    InputName="RadioTAXIWaveform",
-    OutputName="ArtifactsRemoved",
-    medianOverCascades=True,
-    BaselineValue=0,
-    RemoveBinSpikes=True,
-    BinSpikeDeviance=int(2**12),
-    RemoveNegativeBins=True
-    )'''
+# # Removing TAXI artifacts
+# tray.Add(
+#     radcube.modules.RemoveTAXIArtifacts, "ArtifactRemover",
+#     InputName="RadioTAXIWaveform",
+#     OutputName="ArtifactsRemoved",
+#     medianOverCascades=True,
+#     BaselineValue=0,
+#     RemoveBinSpikes=True,
+#     BinSpikeDeviance=int(2**12),
+#     RemoveNegativeBins=True
+#     )
 
 tray.AddModule("I3NullSplitter","splitter",
                SubEventStreamName="RadioEvent"
                )
+# tray.AddModule("MedianFrequencyFilter", "MedianFilter_",
+#             InputName="ArtifactsRemoved",
+#             FilterWindowWidth=20,
+#             OutputName="MedFilteredMap")
 
 tray.AddModule(AnalyzeQframes, "Plotter")
 

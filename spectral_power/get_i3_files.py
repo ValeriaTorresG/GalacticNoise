@@ -18,7 +18,7 @@ from icecube.dataclasses import I3AntennaGeo
 from icecube.icetray import I3Units
 from icecube import astro
 
-# python get_i3_files.py -stD "05" -stM "01" -enD "26" -enM "01" -y "2024"
+# python get_i3_files.py -stD "05" -stM "08" -enD "17" -enM "09" -y "2023"
 
 parser = argparse.ArgumentParser(description='Read I3 files')
 parser.add_argument('--startDay','-stD', help='Day',required=True)

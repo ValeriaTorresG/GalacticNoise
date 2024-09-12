@@ -205,7 +205,7 @@ class fit_data:
 
         x_interpolated, y_interpolated = self.fit_sin(time, average_rms, ant_i, chan_i)
         bins, bin_centers, sem_vals = self.bin_data(self.get_sidereal_time(time), average_rms)
-        ax.errorbar(bin_centers, bins, yerr=sem_vals, markersize=8.0, fmt ='o', ecolor='black', markeredgecolor='black', markerfacecolor='black')
+        ax.errorbar(bin_centers, bins, yerr=sem_vals, markersize=7.0, fmt ='o', ecolor='black', markeredgecolor='black', markerfacecolor='black')
         ax.plot(x_interpolated, y_interpolated, lw=2.0, ls='--', label=f'Fit rms Ant. {ant_i}, Ch. {chan_i}', c='black')
 
         x = self.get_sidereal_time(time)

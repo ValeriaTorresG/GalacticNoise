@@ -10,6 +10,7 @@ import numpy as np
 import astropy.time
 import astropy.coordinates
 from datetime import datetime
+import logging
 
 from icecube.icetray import I3Tray
 from icecube import icetray, dataio, dataclasses, radcube
@@ -18,7 +19,7 @@ from icecube.icetray import I3Units
 from icecube import astro
 
 # from utils import spectrum
-# python readI3.py -stD "01" -stM "01" -enD "30" -enM "05" -y "2024"
+# python readI3.py -stD "10" -stM "02" -enD "10" -enM "03" -y "2024"
 
 parser = argparse.ArgumentParser(description='Read I3 files')
 parser.add_argument('--startDay','-stD', type=str, help='Day',required=True)
@@ -55,7 +56,7 @@ assert is_after(f'{args.year}-{args.startMonth}-{args.startDay}', f'{args.year}-
 baseLoc = f'/mnt/lfs6/exp/IceCube/{args.year}/unbiased/surface/V7_radio/radio_temp/i3_files/'
 #baseLoc = f'/mnt/lfs6/exp/IceCube/{args.year}/unbiased/surface/V6/radio_temp/i3_files/'
 assert os.path.exists(baseLoc), f'Path {baseLoc} does not exist'
-outputBaseLoc = '/mnt/ceph1-npx/user/valeriatorres/galactic_noise/SouthPole'
+outputBaseLoc = '/mnt/ceph1-npx/user/valeriatorres/galactic_noise/SouthPole/daily'
 
 #====== File List ======
 def list_files_between_months(start_date, end_date, directory=baseLoc):
@@ -68,6 +69,7 @@ def list_files_between_months(start_date, end_date, directory=baseLoc):
     print(f'Found {len(filtered_files)} files between {start_date} and {end_date}')
     return filtered_files
 input_files = list_files_between_months(f'{args.year}-{args.startMonth}-{args.startDay}', f'{args.year}-{args.endMonth}-{args.endDay}')
+input_files = sorted(input_files)
 
 #========= Clean Your Barn =========
 def getSiderialTime(frame):
@@ -123,7 +125,7 @@ class GalacticBackground(icetray.I3Module):
         print("... I am starting")
 
     def RunForOneFrame(self, frame):
-        try:
+        if frame.Has(self.inputName) and frame.Has("RadioTaxiTime"):
             time = frame["RadioTaxiTime"]
             time_new = np.datetime64(time.date_time).astype(datetime)
             self.timeOutput.append(time_new)
@@ -140,10 +142,6 @@ class GalacticBackground(icetray.I3Module):
                     rms_value = np.mean(noises[:10])
                     self.baselineRms.append(rms_value)
             # self.siderialTime.append(getSiderialTime(frame))
-        except Exception as e:
-            print(f'frame error: {e}')
-        return
-    
 
     def DAQ(self, frame):
         if self.applyinDAQ:
@@ -175,46 +173,58 @@ class GalacticBackground(icetray.I3Module):
         except Exception as e:
             print(f'rms error: {e}')
 
+init_time = time.time()
+logging.basicConfig(filename='bad_files.log', level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+logger = logging.getLogger('bad_files')
 
 #===== Run the Horse =====
-init_time = time.time()
-tray = I3Tray()
-tray.AddModule("I3Reader", "reader", FileNameList=input_files)
-tray.AddModule(filterFrames, "filterFrames")
-tray.AddModule(chooseTriggerMode, "chooseTriggerMode", mode=args.triggerMode)
-#Removing TAXI artifacts
-try:
-    tray.Add(
-        radcube.modules.RemoveTAXIArtifacts, "ArtifactRemover",
-        InputName="RadioTAXIWaveform",
-        OutputName="ArtifactsRemoved",
-        medianOverCascades=True,
-        RemoveBinSpikes=True,
-        BinSpikeDeviance=int(2**12),
-        RemoveNegativeBins=True,)
-    tray.AddModule("I3NullSplitter","splitter",
-                SubEventStreamName="RadioEvent")
-    tray.AddModule("MedianFrequencyFilter", "MedianFilter",
-                InputName="ArtifactsRemoved",
-                FilterWindowWidth=20,
-                OutputName="MedFilteredMap")
-except Exception as e:
-    print(f'frame error: {e}')
+def runFile(num, file, day):
+    tray = I3Tray()
+    tray.AddModule("I3Reader", "reader", FileNameList=[file])
+    tray.AddModule(filterFrames, "filterFrames")
+    tray.AddModule(chooseTriggerMode, "chooseTriggerMode", mode=args.triggerMode)
+    #Removing TAXI artifacts
+    try:
+        tray.Add(
+            radcube.modules.RemoveTAXIArtifacts, "ArtifactRemover",
+            InputName="RadioTAXIWaveform",
+            OutputName="ArtifactsRemoved",
+            medianOverCascades=True,
+            RemoveBinSpikes=True,
+            BinSpikeDeviance=int(2**12),
+            RemoveNegativeBins=True,)
+        tray.AddModule("I3NullSplitter","splitter",
+                    SubEventStreamName="RadioEvent")
+        tray.AddModule("MedianFrequencyFilter", "MedianFilter",
+                    InputName="ArtifactsRemoved",
+                    FilterWindowWidth=20,
+                    OutputName="MedFilteredMap")
+    except Exception as e:
+        print(f'frame error: {e}')
 
-for band in bands:
-    start_, end_ = band
-    tray.AddModule("BandpassFilter", f"filter_{str(start_)}_{str(end_)}",
-               InputName="MedFilteredMap",
-               OutputName=f"FilteredMap_{str(start_)}_{str(end_)}",
-               ApplyInDAQ=False,
-               FilterType=radcube.eButterworth,
-               ButterworthOrder=13,
-               #FilterType=radcube.eBox,
-               FilterLimits=[start_*I3Units.megahertz, end_*I3Units.megahertz],
-               )
-    tray.AddModule(GalacticBackground, f"TheGalaxyObserverDeconvolved_{start_}-{end_}",
-               InputName=f"FilteredMap_{str(start_)}_{str(end_)}",
-               Output=os.path.join(outputBaseLoc,f"GalOscillation_Time_{args.year}_{args.startMonth}_{args.startDay}-{args.year}_{args.endMonth}_{args.endDay}_Freq_{start_}-{end_}.npz"),
-               )
-tray.Execute()
+    for band in bands:
+        start_, end_ = band
+        tray.AddModule("BandpassFilter", f"filter_{str(start_)}_{str(end_)}",
+                InputName="MedFilteredMap",
+                OutputName=f"FilteredMap_{str(start_)}_{str(end_)}",
+                ApplyInDAQ=False,
+                FilterType=radcube.eButterworth,
+                ButterworthOrder=13,
+                #FilterType=radcube.eBox,
+                FilterLimits=[start_*I3Units.megahertz, end_*I3Units.megahertz],
+                )
+        tray.AddModule(GalacticBackground, f"TheGalaxyObserverDeconvolved_{start_}-{end_}",
+                InputName=f"FilteredMap_{str(start_)}_{str(end_)}",
+                Output=os.path.join(outputBaseLoc,f"{str(num)}_{day}_GalOscillation_Time_{args.year}_{args.startMonth}_{args.startDay}-{args.year}_{args.endMonth}_{args.endDay}_Freq_{start_}-{end_}.npz"),
+                )
+    tray.Execute()
+
+for num, file_ in enumerate(input_files):
+    try:
+        runFile(num, file_, file_.split('/')[-1].split('_')[2])
+        print(f'-- File {file_} done.')
+    except Exception as e:
+        print(file_)
+        logger.info(file_)
+
 print(f'-- Time elapsed: {(time.time()-init_time)/60:.2f} min.')
