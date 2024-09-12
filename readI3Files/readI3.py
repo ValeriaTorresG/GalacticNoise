@@ -183,20 +183,23 @@ tray.AddModule("I3Reader", "reader", FileNameList=input_files)
 tray.AddModule(filterFrames, "filterFrames")
 tray.AddModule(chooseTriggerMode, "chooseTriggerMode", mode=args.triggerMode)
 #Removing TAXI artifacts
-tray.Add(
-    radcube.modules.RemoveTAXIArtifacts, "ArtifactRemover",
-    InputName="RadioTAXIWaveform",
-    OutputName="ArtifactsRemoved",
-    medianOverCascades=True,
-    RemoveBinSpikes=True,
-    BinSpikeDeviance=int(2**12),
-    RemoveNegativeBins=True,)
-tray.AddModule("I3NullSplitter","splitter",
-               SubEventStreamName="RadioEvent")
-tray.AddModule("MedianFrequencyFilter", "MedianFilter",
-            InputName="ArtifactsRemoved",
-            FilterWindowWidth=20,
-            OutputName="MedFilteredMap")
+try:
+    tray.Add(
+        radcube.modules.RemoveTAXIArtifacts, "ArtifactRemover",
+        InputName="RadioTAXIWaveform",
+        OutputName="ArtifactsRemoved",
+        medianOverCascades=True,
+        RemoveBinSpikes=True,
+        BinSpikeDeviance=int(2**12),
+        RemoveNegativeBins=True,)
+    tray.AddModule("I3NullSplitter","splitter",
+                SubEventStreamName="RadioEvent")
+    tray.AddModule("MedianFrequencyFilter", "MedianFilter",
+                InputName="ArtifactsRemoved",
+                FilterWindowWidth=20,
+                OutputName="MedFilteredMap")
+except Exception as e:
+    print(f'frame error: {e}')
 
 for band in bands:
     start_, end_ = band

@@ -2,21 +2,22 @@ from scipy.stats import binned_statistic
 from scipy.optimize import curve_fit, leastsq, least_squares
 from astropy import units as u
 from datetime import datetime
+from itertools import product
 import pandas as pd
 import numpy as np
-import os
 import argparse
 import logging
 import astropy
 import time
 import re
-from itertools import product
+import os
+
 from astropy.visualization import astropy_mpl_style, quantity_support
+from matplotlib.colors import ListedColormap
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib
-from matplotlib.colors import ListedColormap
 
 matplotlib.rcParams['text.usetex'] = False
 plt.rcParams['figure.dpi'] = 150
@@ -136,13 +137,11 @@ class fit_data:
         return np.sum(((y_fit-y_obs)/sigma)**2)/(len(y_obs)-3)
 
 
-    def fit_sin(self, time, rms, ax,color):
+    def fit_sin(self, time, rms, ant_i, chan_i):
 
       t = self.get_sidereal_time(time)
 
       bins, bin_centers, sem_vals = self.bin_data(t, rms)
-      ax.errorbar(bin_centers,bins, yerr=sem_vals, markersize=10.0,
-                  fmt ='o', ecolor=color, markeredgecolor=color, markerfacecolor=color)
 
       guess_mean, guess_std = np.mean(bins),  np.std(bins)
       guess_phase, guess_freq = 1.0, 2/23.934470
@@ -162,10 +161,11 @@ class fit_data:
       print(f"Parameter uncertainties: dAmp={err_amp},  dPhase={np.rad2deg(err_phase)}, dMean={err_mean}")
 
       data_fit = est_amp * np.sin(2 * np.pi * guess_freq * bin_centers + est_phase) + est_mean
-      # self.logger.info({'freq':self.freqBand, 'time':self.timeType, 'ant':ant_i, 'pol':chan_i, 'init_time':self.init_time, 'final_time':self.final_time, 'stat':self.runStatType})
-      # self.logger.info({'amp':est_amp, 'freq':est_freq, 'phase':est_phase, 'mean':est_mean})
+      self.logger.info({'ant':ant_i, 'pol':chan_i, 'init_time':self.init_time, 'final_time':self.final_time,
+                        'Amp':est_amp, 'phase':est_phase, 'mean':est_mean,
+                        'dAmp':err_amp, 'dPhase':err_phase, 'dMean':err_mean})
 
-      return bin_centers, data_fit , ax
+      return bin_centers, data_fit
 
 
     def plot_pol(self,dataFrame, ax, ant_i,chan_i, fitUniqueDays=None):
@@ -180,7 +180,7 @@ class fit_data:
         unique_days = pd.to_datetime(dataFrame['time']).dt.date.unique()
 
         # Define a colormap with 5 discrete colors
-        cmap = ListedColormap(plt.cm.viridis(np.linspace(0, 1, len(unique_days))))
+        cmap = ListedColormap(sns.color_palette("mako_r", as_cmap=True)(np.linspace(0.2, 0.7, len(unique_days))))
 
         for i, day in enumerate(unique_days):
             day_mask = pd.to_datetime(dataFrame['time']).dt.date == day
@@ -193,20 +193,20 @@ class fit_data:
             color = cmap(i / (len(unique_days)-1))
             if fitUniqueDays=='True':
               print(f'Fitting unique day {day}')
-              x_interpolated, y_interpolated, _ = self.fit_sin(time_i, day_average_rms,
-                                                              ax,color=color)
+              x_interpolated, y_interpolated = self.fit_sin(time_i, day_average_rms, ant_i, chan_i)
               # ax.plot(x_interpolated, y_interpolated, lw=2.0, label=f'{day}', color=cmap(i / (len(unique_days)-1)))
             else:
               # Only plot the average
               bins, bin_centers, sem_vals = self.bin_data(self.get_sidereal_time(time_i), day_average_rms)
-              ax.errorbar( bin_centers, bins, yerr=sem_vals, markersize=3.0,
+              ax.errorbar(bin_centers, bins, yerr=sem_vals, markersize=4.0,
                           fmt ='o', ecolor=color,
-                          markeredgecolor=color, markerfacecolor=color,alpha=0.4)
+                          markeredgecolor=color, markerfacecolor=color,alpha=0.8)
               #plt.savefig(f'plot_{ant_i}_{chan_i}.png', dpi=360)
 
-        x_interpolated, y_interpolated , ax = self.fit_sin(time, average_rms, ax, color='navy')
-        ax.plot(x_interpolated, y_interpolated, lw=4.5, label=f'Fit rms Ant. {ant_i}, Ch. {chan_i}', c='black')
-        # ax.errorbar(x_interpolated, y_interpolated, yerr=sem, markersize=3.0, fmt ='o', ecolor='black', markeredgecolor='black', markerfacecolor='black')
+        x_interpolated, y_interpolated = self.fit_sin(time, average_rms, ant_i, chan_i)
+        bins, bin_centers, sem_vals = self.bin_data(self.get_sidereal_time(time), average_rms)
+        ax.errorbar(bin_centers, bins, yerr=sem_vals, markersize=8.0, fmt ='o', ecolor='black', markeredgecolor='black', markerfacecolor='black')
+        ax.plot(x_interpolated, y_interpolated, lw=2.0, ls='--', label=f'Fit rms Ant. {ant_i}, Ch. {chan_i}', c='black')
 
         x = self.get_sidereal_time(time)
         y = self.bin_data(x, average_rms)
@@ -232,17 +232,16 @@ class fit_data:
           for chan_i in corresChans:
             self.plot_pol(dataFrame, axs[ant_i-1,chan_i-1], ant_i, chan_i,fitUniqueDays)
 
-      axs[len(unqAntID)-1,0].set_xlabel('Sidereal time'); axs[len(unqAntID)-1,1].set_xlabel('Sidereal time')
       # Set Y lims for all plots
       for ax in axs.ravel():
           ax.set_ylabel('RMS'); ax.set_ylim(-2,2)
           ax.set_xlabel('Sidereal time')
           ax.legend(fontsize=15)
 
-      plt.suptitle(f'Galactic Noise\nFrequency band: {self.freqBand} MHz\n From {self.init_time} to {self.final_time}', fontsize=18, y=0.95)
-      plt.savefig(f'../plots/plots_icecube/fit_{self.init_time}_{self.final_time}_{self.freq}.png', dpi=360)
+      plt.suptitle(f'Galactic Noise\nFrequency band: {self.freqBand} MHz\n From {self.init_time} to {self.final_time}', fontsize=18, y=1.01)
+      plt.savefig(f'../plots/plots_icecube/fit_{self.init_time}_{self.final_time}_70-150mhz.png', dpi=360)
       plt.close()
-      #self.logger.info('-')
+      self.logger.info('-')
 
     def do_MCMC():
         two_pi = 2 * np.pi

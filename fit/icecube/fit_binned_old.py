@@ -12,6 +12,7 @@ import csv
 from astropy.visualization import astropy_mpl_style, quantity_support
 import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
+import seaborn as sns
 import matplotlib
 matplotlib.rcParams['text.usetex'] = False
 plt.rcParams['figure.dpi'] = 360
