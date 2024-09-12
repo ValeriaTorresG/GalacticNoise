@@ -79,8 +79,8 @@ class AnalyzeQframes(icetray.I3Module):
         for iant in range(3):
             for ichan in range(2):
                 channel_data = self.channel_averages[(iant, ichan)]
-                avg_freqs = channel_data['sumFreqs']#/channel_data['NEntries']
-                avg_dBm = channel_data['sumdBm']#/channel_data['NEntries']
+                avg_freqs = channel_data['sumFreqs'] / channel_data['NEntries']
+                avg_dBm = channel_data['sumdBm'] / channel_data['NEntries']
                 # Create a subplot for the current antenna
                 plt.subplot(3, 1, iant+1)
                 plt.plot(avg_freqs/ I3Units.megahertz, avg_dBm, label=f"Antenna {iant+1}, Channel {ichan+1}", color=color_map[ichan])
