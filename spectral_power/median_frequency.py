@@ -30,7 +30,7 @@ def get_i3_files(base_path='/mnt/ceph1-npx/user/valeriatorres/galactic_noise/Sou
             if file.startswith(init):
                 files_list.append(os.path.join(root, file))
     return files_list
-filename = get_i3_files()
+filename = [get_i3_files()[3]]
 print(filename)
 
 WaveformLengths = [1024]
@@ -65,9 +65,18 @@ class AnalyzeQframes(icetray.I3Module):
                             'NEntries': 0
                         }
                     # Sum the frequencies and dBm values for each channel of each antenna
-                    self.channel_averages[(iant, ichan)]['sumFreqs'] += np.array(freqs)
-                    self.channel_averages[(iant, ichan)]['sumdBm'] += np.array(amps)
-                    self.channel_averages[(iant, ichan)]['NEntries'] += 1
+                    if not ((sum(np.isnan(np.array(amps)))) and sum(np.isnan(np.array(freqs)))):
+                        self.channel_averages[(iant, ichan)]['sumFreqs'] += np.array(freqs)
+                        self.channel_averages[(iant, ichan)]['sumdBm'] += np.array(amps)
+                        self.channel_averages[(iant, ichan)]['NEntries'] += 1
+                    # if iant==0:
+                    #     import time
+                    #     sum_ = sum(np.isnan(np.array(amps)))
+                    #     if sum_ > 0:
+                    #         print(iant, ichan)
+                    #         print(frame['I3EventHeader'])
+
+                        # time.sleep(2)
 
     def Physics(self, frame):
         self.SpectrumAverage(frame, "MedFilteredMap")
@@ -75,23 +84,44 @@ class AnalyzeQframes(icetray.I3Module):
     def Finish(self):
         cmap = sns.color_palette("mako_r", as_cmap=True)
         color_map = cmap(np.linspace(0.2, 0.8, 3))
-        plt.figure(figsize=(20, 15))
-        for iant in range(3):
-            for ichan in range(2):
-                channel_data = self.channel_averages[(iant, ichan)]
-                avg_freqs = channel_data['sumFreqs']#/channel_data['NEntries']
-                avg_dBm = channel_data['sumdBm']#/channel_data['NEntries']
-                # Create a subplot for the current antenna
-                plt.subplot(3, 1, iant+1)
-                plt.plot(avg_freqs/ I3Units.megahertz, avg_dBm, label=f"Antenna {iant+1}, Channel {ichan+1}", color=color_map[ichan])
-                plt.ylim(120, 170)
-                plt.xlim(0, np.max(avg_freqs/ I3Units.megahertz))
-                x_ticks = np.arange(0, np.max(avg_freqs)/ I3Units.megahertz, 50)
-                plt.grid(True)
-                plt.xticks(x_ticks)
-                plt.title(f"Spectral Average - Antenna {iant+1}")
-                plt.ylabel("Spectral power [dBm/Hz]")
-                plt.legend()
+        # print(self.channel_averages.keys())
+        
+        fig , axs = plt.subplots(3,1,figsize=(20, 15))
+        axs= axs.ravel()
+        for i in range(3):
+            channel_data_1 = self.channel_averages[(i, 0)]
+            channel_data_2 = self.channel_averages[(i,0)]
+            avg_freqs_1 = channel_data_1['sumFreqs']/channel_data_1['NEntries']
+            avg_dBm_1 = channel_data_1['sumdBm']/channel_data_1['NEntries']
+            
+            avg_freqs_2 = channel_data_2['sumFreqs']/channel_data_2['NEntries']
+            avg_dBm_2 = channel_data_2['sumdBm']/channel_data_2['NEntries']
+            axs[i].plot(avg_freqs_1, avg_dBm_1)
+            axs[i].plot(avg_freqs_2, avg_dBm_2)
+            for i, _ in enumerate([avg_freqs_1, avg_freqs_2, avg_dBm_1, avg_dBm_2]):
+                if sum(np.isnan(_)):
+                    print(i)
+            
+        
+        
+        
+        # for iant in range(3):
+        #     for ichan in range(2):
+        #         channel_data = self.channel_averages[(iant, ichan)]
+        #         avg_freqs = channel_data['sumFreqs']/channel_data['NEntries']
+        #         avg_dBm = channel_data['sumdBm']/channel_data['NEntries']
+                
+        #         # Create a subplot for the current antenna
+        #         plt.subplot(3, 1, iant+1)
+        #         plt.plot(avg_freqs/ I3Units.megahertz, avg_dBm, label=f"Antenna {iant+1}, Channel {ichan+1}", color=color_map[ichan])
+        #         plt.ylim(120, 170)
+        #         plt.xlim(0, np.max(avg_freqs/ I3Units.megahertz))
+        #         # x_ticks = np.arange(0, np.max(avg_freqs)/ I3Units.megahertz, 50)
+        #         plt.grid(True)
+        #         #plt.xticks(x_ticks)
+        #         plt.title(f"Spectral Average - Antenna {iant+1}")
+        #         plt.ylabel("Spectral power [dBm/Hz]")
+        #         plt.legend()
 
         plt.xlabel("Frequency [MHz]")
         plt.savefig("spec_median_one_day.png")
@@ -111,10 +141,22 @@ def select_soft(frame):
 tray.Add(select_soft, "select_soft",
          streams=[icetray.I3Frame.DAQ])
 
+def chooseTriggerMode(frame, mode):
+    if frame.Has('RadioTraceLength'):
+        traceLength = frame['RadioTraceLength'].value
+        traceLenDict = dict(noncascaded=1024, cascaded=1024*4, semi=1024*2)
+        assert mode in traceLenDict.keys(), f"Mode {mode} not in {traceLenDict.keys()}"
+        if traceLength == traceLenDict[mode]:
+            return True
+        return False
+    else:
+        return False
+
+tray.AddModule(chooseTriggerMode, "chooseTriggerMode", mode='noncascaded',streams=[icetray.I3Frame.Physics])
+
 # Select data with trace length equal to 1024
 def select_TraceLength(frame):
     TraceLength = frame['RadioTraceLength'].value
-
     if TraceLength == 1024:
         return True  # This will indicate that the frame should be saved to the selected stream
     else:
@@ -122,7 +164,7 @@ def select_TraceLength(frame):
 
 # Add the module to the tray
 tray.Add(select_TraceLength, "select_TraceLength",
-         streams=[icetray.I3Frame.DAQ])
+         streams=[icetray.I3Frame.Physics])
 
 # # Removing TAXI artifacts
 # tray.Add(

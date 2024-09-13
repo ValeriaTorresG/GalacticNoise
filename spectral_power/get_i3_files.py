@@ -90,48 +90,52 @@ def chooseTriggerMode(frame, mode):
 init_time = time.time()
 
 for input_file in input_files:
-    # Extract the date from the file name
-    file_date = os.path.basename(input_file).split('_')[2]
-    output_file = os.path.join(outputBaseLoc, f'processed_{file_date}.i3.gz')
+    try:
+        # Extract the date from the file name
+        file_date = os.path.basename(input_file).split('_')[2]
+        output_file = os.path.join(outputBaseLoc, f'processed_{file_date}.i3.gz')
 
-    tray = I3Tray()
-    tray.AddModule("I3Reader", "reader", Filename=input_file)
-    tray.AddModule(filterFrames, "filterFrames")
-    tray.AddModule(chooseTriggerMode, "chooseTriggerMode", mode=args.triggerMode)
+        tray = I3Tray()
+        tray.AddModule("I3Reader", "reader", Filename=input_file)
+        tray.AddModule(filterFrames, "filterFrames")
+        tray.AddModule(chooseTriggerMode, "chooseTriggerMode", mode=args.triggerMode)
 
-    # Removing TAXI artifacts
-    tray.Add(
-        radcube.modules.RemoveTAXIArtifacts, "ArtifactRemover",
-        InputName="RadioTAXIWaveform",
-        OutputName="ArtifactsRemoved",
-        medianOverCascades=True,
-        RemoveBinSpikes=True,
-        BinSpikeDeviance=int(2**12),
-        RemoveNegativeBins=True,)
+        # Removing TAXI artifacts
+        tray.Add(
+            radcube.modules.RemoveTAXIArtifacts, "ArtifactRemover",
+            InputName="RadioTAXIWaveform",
+            OutputName="ArtifactsRemoved",
+            medianOverCascades=True,
+            RemoveBinSpikes=True,
+            BinSpikeDeviance=int(2**12),
+            RemoveNegativeBins=True,)
 
-    tray.AddModule("I3NullSplitter", "splitter",
-                   SubEventStreamName="RadioEvent")
-    tray.AddModule("MedianFrequencyFilter", "MedianFilter",
-                   InputName="ArtifactsRemoved",
-                   FilterWindowWidth=20,
-                   OutputName="MedFilteredMap")
+        tray.AddModule("I3NullSplitter", "splitter",
+                    SubEventStreamName="RadioEvent")
+        tray.AddModule("MedianFrequencyFilter", "MedianFilter",
+                    InputName="ArtifactsRemoved",
+                    FilterWindowWidth=20,
+                    OutputName="MedFilteredMap")
 
-    for band in bands:
-        start_, end_ = band
-        tray.AddModule("BandpassFilter", f"filter_{str(start_)}_{str(end_)}",
-                       InputName="MedFilteredMap",
-                       OutputName=f"FilteredMap_{str(start_)}_{str(end_)}",
-                       ApplyInDAQ=False,
-                       FilterType=radcube.eButterworth,
-                       ButterworthOrder=13,
-                       FilterLimits=[start_ * I3Units.megahertz, end_ * I3Units.megahertz],)
+        for band in bands:
+            start_, end_ = band
+            tray.AddModule("BandpassFilter", f"filter_{str(start_)}_{str(end_)}",
+                        InputName="MedFilteredMap",
+                        OutputName=f"FilteredMap_{str(start_)}_{str(end_)}",
+                        ApplyInDAQ=False,
+                        FilterType=radcube.eButterworth,
+                        ButterworthOrder=13,
+                        FilterLimits=[start_ * I3Units.megahertz, end_ * I3Units.megahertz],)
 
-    # Add the I3Writer module to save the processed data
-    tray.AddModule("I3Writer", "writer",
-                   Filename=output_file,
-                   Streams=[icetray.I3Frame.DAQ, icetray.I3Frame.Physics])
+        # Add the I3Writer module to save the processed data
+        tray.AddModule("I3Writer", "writer",
+                    Filename=output_file,
+                    Streams=[icetray.I3Frame.DAQ, icetray.I3Frame.Physics])
 
-    tray.Execute()
-    tray.Finish()
+        tray.Execute()
+        tray.Finish()
+    
+    except Exception as e:
+        print(e, input_file)
 
 print(f'-- Time elapsed: {(time.time()-init_time)/60:.2f} min.')

@@ -27,7 +27,7 @@ def get_i3_files(base_path='/mnt/ceph1-npx/user/valeriatorres/galactic_noise/Sou
             if file.startswith(init):
                 files_list.append(os.path.join(root, file))
     return files_list
-filename = get_i3_files()
+filename = [get_i3_files()[3]]
 print(filename)
 
 #Input i3 file with the data
