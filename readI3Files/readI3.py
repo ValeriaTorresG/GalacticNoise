@@ -19,7 +19,7 @@ from icecube.icetray import I3Units
 from icecube import astro
 
 # from utils import spectrum
-# python readI3.py -stD "10" -stM "02" -enD "10" -enM "03" -y "2024"
+# python readI3.py -stD 15 -stM 08 -enD 15 -enM 09 -y 2023
 
 parser = argparse.ArgumentParser(description='Read I3 files')
 parser.add_argument('--startDay','-stD', type=str, help='Day',required=True)
@@ -37,7 +37,7 @@ parser.add_argument('--getEnvelope','-gE', help='Function to get Envelope',defau
 args = parser.parse_args()
 
 #====== Frequency Bands ======
-bands = [[70,150]]#,[150,250],[250,350]]
+bands = [[70,90], [90,110], [110,130], [130,150]]#,[150,250],[250,350]]
 
 #=== Check Dates ===
 def is_after(date1, date2):
@@ -120,7 +120,6 @@ class GalacticBackground(icetray.I3Module):
 
         self.timeOutput = []
         self.baselineRms = []
-        self.siderialTime = []
 
         print("... I am starting")
 
@@ -141,7 +140,6 @@ class GalacticBackground(icetray.I3Module):
                     noises = cutTraces(timeSeries, lengthSubTraces=64)
                     rms_value = np.mean(noises[:10])
                     self.baselineRms.append(rms_value)
-            # self.siderialTime.append(getSiderialTime(frame))
 
     def DAQ(self, frame):
         if self.applyinDAQ:
@@ -157,7 +155,6 @@ class GalacticBackground(icetray.I3Module):
             baselineRms = np.asarray(self.baselineRms)
             # Reshape baselineRms to have dimensions (self.counts, 3, 2)
             baselineRms_reshaped = baselineRms.reshape(-1, 3, 2)
-            siderialTime = self.siderialTime
             # Save the data
             np.savez(self.output,
                     time=timeOutput,
@@ -168,7 +165,6 @@ class GalacticBackground(icetray.I3Module):
                     rms21 = baselineRms_reshaped[:, 1, 1],
                     rms30 = baselineRms_reshaped[:, 2, 0],
                     rms31 = baselineRms_reshaped[:, 2, 1],
-                    #siderialTime=siderialTime
                     )
         except Exception as e:
             print(f'rms error: {e}')
@@ -215,7 +211,7 @@ def runFile(num, file, day):
                 )
         tray.AddModule(GalacticBackground, f"TheGalaxyObserverDeconvolved_{start_}-{end_}",
                 InputName=f"FilteredMap_{str(start_)}_{str(end_)}",
-                Output=os.path.join(outputBaseLoc,f"{str(num)}_{day}_GalOscillation_Time_{args.year}_{args.startMonth}_{args.startDay}-{args.year}_{args.endMonth}_{args.endDay}_Freq_{start_}-{end_}.npz"),
+                Output=os.path.join(outputBaseLoc,f"GalOscillation_Time_{day}_Freq_{start_}-{end_}.npz"),
                 )
     tray.Execute()
 

@@ -4,7 +4,9 @@ from icecube.icetray import I3Tray
 from icecube import icetray, dataio, dataclasses, taxi_reader, radcube
 from icecube.icetray.i3logging import log_info
 import matplotlib.gridspec as gridspec
+from datetime import datetime
 import time
+import re
 import os
 
 import matplotlib.pyplot as plt
@@ -15,20 +17,35 @@ import argparse
 
 
 #Input i3 file with the data
-'''parser = argparse.ArgumentParser()
-parser.add_argument("input", type=str, nargs="+", default=[], help="List of i3 files")
-args = parser.parse_args()
-
-filename = args.input'''
 def get_i3_files(base_path='/mnt/ceph1-npx/user/valeriatorres/galactic_noise/SouthPole/i3_files', init='processed_'):
     files_list = []
     for root, dirs, files in os.walk(base_path):
         for file in files:
             if file.startswith(init):
-                files_list.append(os.path.join(root, file))
-    return files_list
-filename = [get_i3_files()[3]]
-print(filename)
+                files_list.append(file)
+    return files_list, base_path
+
+def get_files_by_date(init_time, final_time):
+        # Convert dates to datetime objects
+        init_time = datetime.strptime(init_time, "%Y-%m-%d")
+        final_time = datetime.strptime(final_time, "%Y-%m-%d")
+
+        # List files in the directory
+        files, base_path = get_i3_files()
+
+        # Filter files matching the format and within the date range
+        pattern = r"processed_(\d{4})-(\d{2})-(\d{2}).i3.gz"
+        valid_files = []
+        for file in files:
+            match = re.match(pattern, file)
+            if match:
+                file_date = datetime(year=int(match.group(1)), month=int(match.group(2)), day=int(match.group(3)))
+                if init_time <= file_date <= final_time:
+                    valid_files.append(os.path.join(base_path, file))
+        print(f'{len(valid_files)} days of data')
+        return valid_files
+
+filename = get_files_by_date('2023-08-05', '2023-09-15')
 
 #Input i3 file with the data
 
@@ -84,17 +101,18 @@ class AnalyzeQframes(icetray.I3Module):
                 # Create a subplot for the current antenna
                 plt.subplot(3, 1, iant+1)
                 plt.plot(avg_freqs/ I3Units.megahertz, avg_dBm, label=f"Antenna {iant+1}, Channel {ichan+1}", color=color_map[ichan])
-                plt.ylim(120, 170)
+                plt.ylim(120, 180)
                 plt.xlim(0, np.max(avg_freqs/ I3Units.megahertz))
                 x_ticks = np.arange(0, np.max(avg_freqs)/ I3Units.megahertz, 50)
                 plt.grid(True)
                 plt.xticks(x_ticks)
+                plt.legend()
                 plt.title(f"Spectral Average - Antenna {iant+1}")
                 plt.ylabel("Spectral power [dBm/Hz]")
 
         plt.xlabel("Frequency [MHz]")
         plt.legend()
-        plt.savefig("spect_one_day.png")
+        plt.savefig("spect_aug_sept_2023.png", dpi=360)
 
 init_time = time.time()
 tray = I3Tray()
@@ -123,18 +141,6 @@ def select_TraceLength(frame):
 # Add the module to the tray
 tray.Add(select_TraceLength, "select_TraceLength",
          streams=[icetray.I3Frame.DAQ])
-
-# Removing TAXI artifacts
-'''tray.Add(
-    radcube.modules.RemoveTAXIArtifacts, "ArtifactRemover",
-    InputName="RadioTAXIWaveform",
-    OutputName="ArtifactsRemoved",
-    medianOverCascades=True,
-    BaselineValue=0,
-    RemoveBinSpikes=True,
-    BinSpikeDeviance=int(2**12),
-    RemoveNegativeBins=True
-    )'''
 
 tray.AddModule("I3NullSplitter","splitter",
                SubEventStreamName="RadioEvent"
