@@ -25,7 +25,7 @@ plt.rcParams['figure.dpi'] = 360
 plt.style.use(astropy_mpl_style)
 quantity_support()
 
-# python fit_sidereal.py -ini 2023-01-01 -fin 2023-12-31
+# python fit_sidereal.py -ini 2023-08-05 -fin 2023-08-15
 
 class fit_data:
 
@@ -158,7 +158,12 @@ class fit_data:
         location = astropy.coordinates.EarthLocation.of_site("IceCube")
         time = astropy.time.Time(time_utc, location=location)
         sidereal_time = time.sidereal_time('apparent').value
+        
         return sidereal_time
+
+    def get_azimuth(self, time):
+        azimuth = (90 + time) % 360
+        return azimuth
 
     def bin_data(self, time, rms):
         bins, bin_edges, _ = binned_statistic(time, rms, statistic='median', bins=50)
@@ -168,7 +173,6 @@ class fit_data:
         sem = bin_std/np.sqrt(bin_counts)
         mask =  ~np.isnan(bins) & ~np.isinf(bins)
         bin_centers_, bins, sem = bin_centers[mask], bins[mask], sem[mask]
-
         #print(f'Number of bins: {len(bins)}')
         return bins, bin_centers_, sem, bin_centers
 
@@ -177,13 +181,14 @@ class fit_data:
 
     def fit_sin(self, time, rms, ant_i, chan_i):
       t = self.get_sidereal_time(time)
+      azim = self.get_azimuth(t)
 
-      bins, bin_centers, sem_vals, bin_centers_ = self.bin_data(t, rms)
+      #bins, bin_centers, sem_vals, bin_centers_ = self.bin_data(t, rms)
+      bins, bin_centers, sem_vals, bin_centers_ = self.bin_data(azim, rms)
 
       guess_mean, guess_std = np.mean(bins),  np.std(bins)
       guess_phase, guess_freq = 1.0, 2/23.934470
       guess_amp = guess_std/np.sqrt(2)
-
       bin_centers = np.asarray(bin_centers)
 
       def optimize_func(x_bins, amp, phase, mean):
@@ -228,13 +233,13 @@ class fit_data:
                 print(f'Fitting unique day {day}')
                 x_interpolated, y_interpolated = self.fit_sin(time_i, day_average_rms, ant_i, chan_i)
             else:
-                bins, bin_centers, sem_vals, _ = self.bin_data(self.get_sidereal_time(time_i), day_average_rms)
+                bins, bin_centers, sem_vals, _ = self.bin_data(self.get_azimuth(self.get_sidereal_time(time_i)), day_average_rms)
                 ax.errorbar(bin_centers, bins, yerr=sem_vals, markersize=4.0,
                             fmt ='o', ecolor=color,
                             markeredgecolor=color, markerfacecolor=color,alpha=0.7)
 
         x_interpolated, y_interpolated = self.fit_sin(time, average_rms, ant_i, chan_i)
-        bins, bin_centers, sem_vals, _ = self.bin_data(self.get_sidereal_time(time), average_rms)
+        bins, bin_centers, sem_vals, _ = self.bin_data(self.get_azimuth(self.get_sidereal_time(time)), average_rms)
         ax.errorbar(bin_centers, bins, yerr=np.std(bins), markersize=5.0, fmt ='o', ecolor='black', markeredgecolor='black', markerfacecolor='black')
         ax.plot(x_interpolated, y_interpolated, lw=2.0, ls='--', label=f'Fit rms Ant. {ant_i}, Ch. {chan_i}', c='black')
 
@@ -257,10 +262,11 @@ class fit_data:
 
       for ax in axs.ravel():
           ax.set_ylabel('RMS'); ax.set_ylim(-2,2)
-          ax.set_xlabel('Sidereal time')
+          #ax.set_xlabel('Sidereal time')
+          ax.set_xlabel('Azimuth [deg]')
           ax.legend(fontsize=15)
 
-      plt.suptitle(f'Galactic Noise\nFrequency band: {self.freqBand} MHz\n From {self.init_time} to {self.final_time}', fontsize=18, y=1.0)
+      plt.suptitle(f'Galactic Noise\nFrequency band: {self.freqBand} MHz\n From {self.init_time} to {self.final_time}', fontsize=18, y=0.95)
       plt.savefig(f'../plots/plots_icecube/fit_{self.init_time}_{self.final_time}_{self.freqBand}mhz.png', dpi=360)
       plt.close()
       self.logger.info('-')

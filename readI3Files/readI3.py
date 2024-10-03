@@ -19,7 +19,7 @@ from icecube.icetray import I3Units
 from icecube import astro
 
 # from utils import spectrum
-# python readI3.py -stD 15 -stM 08 -enD 15 -enM 09 -y 2023
+# python readI3.py -stD 01 -stM 01 -enD 31 -enM 01 -y 2024
 
 parser = argparse.ArgumentParser(description='Read I3 files')
 parser.add_argument('--startDay','-stD', type=str, help='Day',required=True)
