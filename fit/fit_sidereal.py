@@ -1,7 +1,9 @@
+from astropy.coordinates import SkyCoord, EarthLocation, AltAz, Galactic
 from scipy.stats import binned_statistic
 from scipy.optimize import curve_fit
 from scipy.fft import fft, ifft
 from astropy import units as u
+from astropy.time import Time
 from datetime import datetime
 from itertools import product
 import pandas as pd
@@ -15,99 +17,131 @@ import os
 
 from astropy.visualization import astropy_mpl_style, quantity_support
 from matplotlib.colors import ListedColormap
+from matplotlib.colors import Normalize
 import matplotlib.gridspec as gridspec
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import seaborn as sns
 import matplotlib
 
 matplotlib.rcParams['text.usetex'] = False
-plt.rcParams['figure.dpi'] = 360
+plt.rcParams['figure.dpi'] = 150
 plt.style.use(astropy_mpl_style)
 quantity_support()
+# python fit_sidereal.py -f GalOscillation_Time_2024_01_05-2024_01_16_Freq_70-150.npz
 
-# python fit_sidereal.py -ini 2023-08-05 -fin 2023-08-15
 
 class fit_data:
 
-    def __init__(self, base_path, runStatType, timeType, init_time, final_time, freqBand):
+    def __init__(self, filename, runStatType, timeType, init_time, final_time, freqBand):
+        """
+        Initializes the fit_data class instance.
 
-        self.ant, self.pol = 3, 2  # * 3 antennas and 2 polarisations
-        self.id_list = [f'rms{_}{__}' for (_,__) in list(product(np.arange(1,self.ant+1), np.arange(1,self.pol+1)))]
-
+        Args:
+            filename (str): Name of the .npz file containing data.
+            runStatType (str): Type of statistic for moving average ('mean' or 'median').
+            timeType (str): Type of time to use ('sid' or 'utc').
+            init_time (str): Initial date in 'YYYY-MM-DD' format.
+            final_time (str): Final date in 'YYYY-MM-DD' format.
+            freqBand (str): Frequency band in MHz.
+        """
+        self.ant, self.pol = 3, 2
+        self.id_list = [f'rms{_}{__}' for (_,__) in  list(product(np.arange(1,self.ant+1),np.arange(1,self.pol+1)))]
         self.window = 150
         self.timeType = timeType
-        self.dataframe = pd.DataFrame()  # * create dataframe to make easier column operations
+        self.dataframe = pd.DataFrame()
+        self.time, self.rms = self.read_npz(filename)
         self.runStatType = runStatType
-
         self.init_time, self.final_time = init_time, final_time
         self.freqBand = freqBand
-
-        self.base_path = base_path
-        self.files = self.get_files_by_date(init_time, final_time)
-
-        logging.basicConfig(filename='fit_icecube.log', level=logging.INFO, format='%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+        logging.basicConfig(filename='fit_icecube.log', level=logging.INFO,
+                            format='%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
         self.logger = logging.getLogger('fit_icecube')
-        #print(f'-> Found {len(self.files)} files between {init_time} and {final_time}')
+        print(f'-> Reading {filename.split("_")[2][:-4]} MHz')
 
-
-    def get_files_by_date(self, init_time, final_time):
-        # Convert dates to datetime objects
-        init_time = datetime.strptime(init_time, "%Y-%m-%d")
-        final_time = datetime.strptime(final_time, "%Y-%m-%d")
-
-        # List files in the directory
-        files = os.listdir(self.base_path)
-
-        # Filter files matching the format and within the date range
-        pattern = r"GalOscillation_Time_(\d{4})-(\d{2})-(\d{2})_Freq_"+ self.freqBand + r"\.npz"
-        valid_files = []
-        for file in files:
-            match = re.match(pattern, file)
-            if match:
-                file_date = datetime(year=int(match.group(1)), month=int(match.group(2)), day=int(match.group(3)))
-                if init_time <= file_date <= final_time:
-                    valid_files.append(os.path.join(self.base_path, file))
-        print(f'{len(valid_files)} days of data')
-        return valid_files
 
     def read_npz(self, filename):
-        data = np.load(filename, allow_pickle=True)  # * allow pickling -> use of packed objects
+        """
+        Reads .npz files and returns time and RMS values.
+
+        Args:
+            filename (str): Name of the .npz file to read.
+
+        Returns:
+            tuple: time (array of times), rms (dictionary of RMS values).
+        """
+        data = np.load(filename, allow_pickle=True)
         self.time = data['time']
-        self.rms = dict(
-                      rms11 = data['rms10'], rms12 = data['rms11'],
-                      rms21 = data['rms20'], rms22 = data['rms21'],
-                      rms31 = data['rms30'], rms32 = data['rms31']
-                          )
+        self.rms = dict(rms11 = data['rms10'], rms12 = data['rms11'],
+                        rms21 = data['rms20'], rms22 = data['rms21'],
+                        rms31 = data['rms30'], rms32 = data['rms31'])
         return self.time, self.rms
 
+
     def to_dataframe(self, dataFrame=None):
-        for file in self.files:
-            #print(f"-> Reading file {file}")
-            self.time, self.rms = self.read_npz(file)
-            temp_df = pd.DataFrame({'time': self.time})
-            for _ in self.id_list:
-                temp_df[_] = self.rms[_]
-            self.dataframe = pd.concat([self.dataframe, temp_df])
+        """
+        Converts time and RMS values into a pandas DataFrame.
+
+        Args:
+            dataFrame (pd.DataFrame, optional): Existing DataFrame. If not provided, a new one is used.
+
+        Returns:
+            pd.DataFrame: DataFrame with time and RMS columns.
+        """
+        dataFrame['time'] = self.time
+        for _ in self.id_list:
+            dataFrame[_] = self.rms[_]
         print("Converted to DataFrame")
-        return self.dataframe
+        return dataFrame
+
 
     def selectTimePeriod(self, init_time, final_time, dataFrame=None):
-        assert 'time' in self.dataframe.columns, "There is no data for this period of time"
+        """
+        Selects a specific time period from the DataFrame.
+
+        Args:
+            init_time (str): Initial date in 'YYYY-MM-DD' format.
+            final_time (str): Final date in 'YYYY-MM-DD' format.
+            dataFrame (pd.DataFrame, optional): DataFrame to filter.
+
+        Returns:
+            pd.DataFrame: DataFrame filtered by the specified time period.
+        """
         init_time, final_time = datetime.strptime(init_time, "%Y-%m-%d"), datetime.strptime(final_time, "%Y-%m-%d")
-        self.dataframe['time'] = pd.to_datetime(self.dataframe['time'], unit='s')
-        self.dataframe = self.dataframe[(self.dataframe['time'] >= init_time) & (self.dataframe['time'] <= final_time)]
+        dataFrame = dataFrame.loc[dataFrame['time'] > init_time]
+        dataFrame = dataFrame.loc[dataFrame['time'] < final_time]
         print(f'Selected time period from {init_time} to {final_time}')
-        return self.dataframe
-
-    def clean_data(self, n=10, dataFrame=None):  # n to calculate a threshold by adding n to the mean rms.
-      for _ in self.id_list:
-          mean_ = np.mean(dataFrame[_])
-          dataFrame = dataFrame[np.abs(dataFrame[_]) - mean_ <=  n]  # * remove outliers
-      print("Cleaned Outliers Points")
-      return dataFrame
+        return dataFrame
 
 
-    def get_moving_avg(self, dataFrame):  # * calc moving avg using rolling
+    def clean_data(self, n=50, dataFrame=None):
+        """
+        Cleans data by removing outliers that exceed a threshold defined by 'n'.
+
+        Args:
+            n (int, optional): Threshold to remove outliers. Default is 50.
+            dataFrame (pd.DataFrame, optional): DataFrame to clean.
+
+        Returns:
+            pd.DataFrame: DataFrame without outlier points.
+        """
+        for _ in self.id_list:
+            mean_ = np.mean(dataFrame[_])
+            dataFrame = dataFrame[np.abs(dataFrame[_]) - mean_ <=  n]
+        print("Cleaned Outliers Points")
+        return dataFrame
+
+
+    def get_moving_avg(self, dataFrame):
+        """
+        Calculates the moving average using a rolling window for each day.
+
+        Args:
+            dataFrame (pd.DataFrame): DataFrame with data to process.
+
+        Returns:
+            pd.DataFrame: DataFrame with calculated moving average.
+        """
         grouped = dataFrame.groupby(dataFrame['time'].dt.date)
         result_df = pd.DataFrame()
         for date, group in grouped:
@@ -122,7 +156,18 @@ class fit_data:
         print(f"Calculated Moving {self.runStatType}")
         return result_df
 
-    def clean_outliers(self, dataFrame, threshold=5.0):  # remove outliers that are more than n standard deviations from the mean
+
+    def clean_outliers(self, dataFrame, threshold=5.0):
+         """
+        Removes outliers that are more than 'threshold' standard deviations from the mean.
+
+        Args:
+            dataFrame (pd.DataFrame): DataFrame to clean.
+            threshold (float, optional): Number of standard deviations to consider as outlier. Default is 5.0.
+
+        Returns:
+            pd.DataFrame: DataFrame without outliers.
+        """
         for _ in self.id_list:
           rms = dataFrame[_]
           mean = np.mean(rms)
@@ -130,86 +175,135 @@ class fit_data:
           dataFrame = dataFrame[(rms - mean) <= threshold * std]
         return dataFrame
 
-    def filter_signal(self, dataFrame, threshold=0.1):
-        time = self.get_sidereal_time(dataFrame['time'])
-        freq = np.fft.fftfreq(len(time), d=(time[1] - time[0]))
-        mask = np.abs(freq) < 0.1
-        for _ in self.id_list:
-          rms = dataFrame[_].to_numpy().ravel()
-          ft = fft(rms)
-          ft_filt = ft * mask
-          filtered_signal = ifft(ft_filt)
-          dataFrame[_] = filtered_signal
-        return dataFrame
 
     def process_data(self):
+        """
+        Processes the data by applying several cleaning and transformation functions.
+
+        Returns:
+            pd.DataFrame: Processed DataFrame ready for analysis and visualization.
+        """
         df = self.to_dataframe(self.dataframe)
         df = self.selectTimePeriod(init_time=self.init_time, final_time=self.final_time, dataFrame=df)
         df = self.clean_data(n=10, dataFrame=df)
-        df = self.get_moving_avg(dataFrame=df)
         df = self.clean_outliers(dataFrame=df)
-        #df = self.filter_signal(dataFrame=df)
+        df = self.get_moving_avg(dataFrame=df)
         print("Finished Processing Data")
         return df
 
-    #======= Fit and Plotting Functions =======
 
     def get_sidereal_time(self, time_utc):
+        """
+        Converts UTC time to local sidereal time.
+
+        Args:
+            time_utc (array): Array of times in UTC.
+
+        Returns:
+            array: Array of times in local sidereal time.
+        """
         location = astropy.coordinates.EarthLocation.of_site("IceCube")
         time = astropy.time.Time(time_utc, location=location)
         sidereal_time = time.sidereal_time('apparent').value
-        
         return sidereal_time
 
-    def get_azimuth(self, time):
-        azimuth = (90 + time) % 360
-        return azimuth
 
     def bin_data(self, time, rms):
+        """
+        Bins the data using the median and removes empty or non-numeric bins to avoid errors in the fit.
+
+        Args:
+            time (array): Array of times (can be in sidereal time).
+            rms (array): Array of corresponding RMS values.
+
+        Returns:
+            tuple: bins, bin_centers_, sem, bin_centers, bin_std
+        """
         bins, bin_edges, _ = binned_statistic(time, rms, statistic='median', bins=50)
         bin_centers = (bin_edges[:-1] + bin_edges[1:])/2
         bin_std , _, _ = binned_statistic(time, rms, statistic='std', bins=50)
         bin_counts, _, _ = binned_statistic(time, rms, statistic='count', bins=50)
         sem = bin_std/np.sqrt(bin_counts)
-        mask =  ~np.isnan(bins) & ~np.isinf(bins)
+        mask =  (~np.isnan(bins)) & (~np.isinf(bins))# & (bin_counts>1)
         bin_centers_, bins, sem = bin_centers[mask], bins[mask], sem[mask]
-        #print(f'Number of bins: {len(bins)}')
-        return bins, bin_centers_, sem, bin_centers
+        return bins, bin_centers_, sem, bin_centers, bin_std[mask]
+
 
     def chi_squared(self, y_obs, y_fit, sigma):
+        """
+        Calculates the reduced chi-squared value to evaluate the fit.
+
+        Args:
+            y_obs (array): Observed values.
+            y_fit (array): Fitted values.
+            sigma (array): Standard deviations of the observed values.
+
+        Returns:
+            float: Reduced chi-squared value.
+        """
         return np.sum(((y_fit-y_obs)/sigma)**2)/(len(y_obs)-3)
 
+
     def fit_sin(self, time, rms, ant_i, chan_i):
-      t = self.get_sidereal_time(time)
-      azim = self.get_azimuth(t)
+        """
+        Fits a sinusoidal function to the RMS data as a function of sidereal time.
 
-      #bins, bin_centers, sem_vals, bin_centers_ = self.bin_data(t, rms)
-      bins, bin_centers, sem_vals, bin_centers_ = self.bin_data(azim, rms)
+        Args:
+            time (array): Array of times in UTC.
+            rms (array): Array of RMS values.
+            ant_i (int): Antenna number.
+            chan_i (int): Channel (polarization) number.
 
-      guess_mean, guess_std = np.mean(bins),  np.std(bins)
-      guess_phase, guess_freq = 1.0, 2/23.934470
-      guess_amp = guess_std/np.sqrt(2)
-      bin_centers = np.asarray(bin_centers)
+        Returns:
+            tuple: bin_centers_ (centers of the bins), data_fit (fitted values).
+        """
+        t = self.get_sidereal_time(time)
 
-      def optimize_func(x_bins, amp, phase, mean):
-        return amp * np.sin(2 * np.pi * guess_freq * x_bins + phase) + mean
+        bins, bin_centers, sem_vals, bin_centers_, std = self.bin_data(t, rms)
 
-      popt, pcov = curve_fit(optimize_func, bin_centers, bins, p0=[guess_amp, guess_phase, guess_mean], bounds=([-np.inf,-np.inf, -np.inf],[np.inf, np.inf,np.inf]))
-      est_amp, est_phase, est_mean = popt
-      err_amp, err_phase, err_mean = np.sqrt(np.diag(pcov))
+        guess_mean, guess_std = np.mean(bins),  np.std(bins)
+        guess_phase, guess_freq = 1.0, 2/23.934470
+        guess_amp = guess_std/np.sqrt(2)
+        bin_centers = np.asarray(bin_centers)
 
-      # Print the results
-      print(f"Fitted parameters: Amp={est_amp}, Phase={np.rad2deg(est_phase)}, Mean={est_mean}")
-      print(f"Parameter uncertainties: dAmp={err_amp},  dPhase={np.rad2deg(err_phase)}, dMean={err_mean}")
+        def optimize_func(x_bins, amp, phase, mean):
+            return amp * np.sin(2 * np.pi * guess_freq * x_bins + phase) + mean
 
-      data_fit = est_amp * np.sin(2 * np.pi * guess_freq * bin_centers_ + est_phase) + est_mean
-      self.logger.info({'ant':ant_i, 'pol':chan_i, 'init_time':self.init_time, 'final_time':self.final_time,
-                        'Amp':est_amp, 'phase':est_phase, 'mean':est_mean,
-                        'dAmp':err_amp, 'dPhase':err_phase, 'dMean':err_mean})
+        popt, pcov = curve_fit(optimize_func, bin_centers, bins,
+                               p0=[guess_amp, guess_phase, guess_mean],
+                               bounds=([-np.inf,-np.inf, -np.inf],[np.inf, np.inf,np.inf]))
+        est_amp, est_phase, est_mean = popt
+        err_amp, err_phase, err_mean = np.sqrt(np.diag(pcov))
+        data_fit = est_amp * np.sin(2 * np.pi * guess_freq * bin_centers_ + est_phase) + est_mean
 
-      return bin_centers_, data_fit
+        if est_amp<0:
+            est_amp = np.abs(est_amp)
+            est_phase = est_phase + np.pi
+        print(f"Fitted parameters: Amp={est_amp}, Phase={np.rad2deg(est_phase)}, Mean={est_mean}")
+        print(f"Parameter uncertainties: dAmp={err_amp},  dPhase={np.rad2deg(err_phase)}, dMean={err_mean}")
+        self.logger.info({'ant':ant_i, 'pol':chan_i, 'init_time':self.init_time,
+                            'final_time':self.final_time, 'Amp':est_amp,
+                            'phase':est_phase, 'mean':est_mean, 'dAmp':err_amp,
+                            'dPhase':err_phase, 'dMean':err_mean})
 
-    def plot_pol(self, dataFrame, ax, ant_i,chan_i, fitUniqueDays=None):
+        return bin_centers_, data_fit
+
+
+    def plot_pol(self, dataFrame, ax, ant_i, chan_i, fitUniqueDays=None, norm=None, cmap=None):
+        """
+        Plots the RMS values for a specific antenna and polarization.
+        Plots a fit for each day if fitUniqueDays is True.
+        Error bars use the std from the binning process.
+
+        Args:
+            dataFrame (pd.DataFrame): DataFrame with data to plot.
+            ax (matplotlib.axes.Axes): Axis where the plot will be made.
+            ant_i (int): Antenna number.
+            chan_i (int): Channel (polarization) number.
+            fitUniqueDays (bool, optional): If True, fits each day separately.
+            norm (Normalize, optional): Normalization for the color map.
+            cmap (ListedColormap, optional): Color map to use.
+        """
         id_i = f'{ant_i}{chan_i}'
         print(f'\n- Ant. {ant_i}, Pol. {chan_i}')
 
@@ -217,79 +311,109 @@ class fit_data:
         average_rms = dataFrame['averagerms'+id_i] - np.mean(dataFrame['averagerms'+id_i])  # center data
         rms_cent = dataFrame['rms'+id_i] - np.mean(dataFrame['rms'+id_i])
 
-        sidereal_times = np.array([self.get_sidereal_time(t) for t in time])
-        unique_days = pd.to_datetime(dataFrame['time']).dt.date.unique()
+        unique_days = time.dt.date.unique()
 
-        cmap = ListedColormap(sns.color_palette("Spectral", as_cmap=True)(np.linspace(0., 1., len(unique_days))))
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
 
         for i, day in enumerate(unique_days):
             day_mask = pd.to_datetime(dataFrame['time']).dt.date == day
-            day_sidereal_times = sidereal_times[day_mask]
             time_i = time[day_mask]
             day_rms_cent = rms_cent[day_mask]
             day_average_rms = average_rms[day_mask]
-            color = cmap(i / (len(unique_days)))
+            color = cmap(norm(mdates.date2num(pd.to_datetime(day))))
             if fitUniqueDays == 'True':
                 print(f'Fitting unique day {day}')
                 x_interpolated, y_interpolated = self.fit_sin(time_i, day_average_rms, ant_i, chan_i)
             else:
-                bins, bin_centers, sem_vals, _ = self.bin_data(self.get_azimuth(self.get_sidereal_time(time_i)), day_average_rms)
-                ax.errorbar(bin_centers, bins, yerr=sem_vals, markersize=4.0,
-                            fmt ='o', ecolor=color,
-                            markeredgecolor=color, markerfacecolor=color,alpha=0.7)
+                bins, bin_centers, sem_vals, _, _ = self.bin_data(self.get_sidereal_time(time_i), day_average_rms)
+                ax.errorbar(bin_centers, bins, yerr=sem_vals, markersize=4.0, fmt='o', ecolor=color,
+                            markeredgecolor=color, markerfacecolor=color, alpha=0.7)
 
         x_interpolated, y_interpolated = self.fit_sin(time, average_rms, ant_i, chan_i)
-        bins, bin_centers, sem_vals, _ = self.bin_data(self.get_azimuth(self.get_sidereal_time(time)), average_rms)
-        ax.errorbar(bin_centers, bins, yerr=np.std(bins), markersize=5.0, fmt ='o', ecolor='black', markeredgecolor='black', markerfacecolor='black')
+        bins, bin_centers, _, _, std = self.bin_data(self.get_sidereal_time(time), average_rms)
+        ax.errorbar(bin_centers, bins, yerr=std, markersize=5.0, elinewidth=1.0, capsize=2, capthick=1.2,
+                    fmt='o', ecolor='black', markeredgecolor='black', markerfacecolor='black')
         ax.plot(x_interpolated, y_interpolated, lw=2.0, ls='--', label=f'Fit rms Ant. {ant_i}, Ch. {chan_i}', c='black')
 
+
     def plot_rms(self, dataFrame, plotAll=True, ant_ch_List=[[1,1],[1,2]], fitUniqueDays=False):
-      if not plotAll:
-        assert len(ant_ch_List) > 0, "ant_ch_List must have at least one element"
-        plotList = ant_ch_List
-        print(f'Plotting only antennas and polarisations: {plotList}')
-      else:
-        plotList = list(product(np.arange(1,3+1), np.arange(1,2+1)))  # Not using self, incase loaded from a file
-        print(f'Plotting all antennas and polarisations: {plotList}')
-      unqAntID = np.unique(np.array(plotList)[:,0])
-      #=== Initiate a Figure ===
-      numRows = len(unqAntID)
-      fig, axs = plt.subplots(numRows,2, figsize=[25, 16])
-      for ant_i in unqAntID:
-          corresChans = [_[1] for _ in plotList if _[0] == ant_i]
-          for chan_i in corresChans:
-            self.plot_pol(dataFrame, axs[ant_i-1,chan_i-1], ant_i, chan_i,fitUniqueDays)
+        """
+        Generates plots of the RMS values for specified antennas and polarizations.
 
-      for ax in axs.ravel():
-          ax.set_ylabel('RMS'); ax.set_ylim(-2,2)
-          #ax.set_xlabel('Sidereal time')
-          ax.set_xlabel('Azimuth [deg]')
-          ax.legend(fontsize=15)
+        Args:
+            dataFrame (pd.DataFrame): DataFrame with data to plot.
+            plotAll (bool, optional): If True, plots all available antennas and polarizations. Default is True.
+            ant_ch_List (list, optional): List of antennas and polarizations to plot if plotAll is False.
+            fitUniqueDays (bool, optional): If True, fits each day separately.
+        """
+        if not plotAll:
+            assert len(ant_ch_List) > 0, "ant_ch_List must have at least one element"
+            plotList = ant_ch_List
+            print(f'Plotting only antennas and polarisations: {plotList}')
+        else:
+            plotList = list(product(np.arange(1,3+1), np.arange(1,2+1)))  # Not using self, incase loaded from a file
+            print(f'Plotting all antennas and polarisations: {plotList}')
+        unqAntID = np.unique(np.array(plotList)[:,0])
+        #=== Initiate a Figure ===
+        numRows = len(unqAntID)
+        fig, axs = plt.subplots(numRows,2, figsize=[25, 16])
+        cmap = ListedColormap(sns.color_palette("Spectral", n_colors=256))
+        vmin = mdates.date2num(pd.to_datetime(dataFrame['time']).min())
+        vmax = mdates.date2num(pd.to_datetime(dataFrame['time']).max())
+        norm = Normalize(vmin=vmin, vmax=vmax)
 
-      plt.suptitle(f'Galactic Noise\nFrequency band: {self.freqBand} MHz\n From {self.init_time} to {self.final_time}', fontsize=18, y=0.95)
-      plt.savefig(f'../plots/plots_icecube/fit_{self.init_time}_{self.final_time}_{self.freqBand}mhz.png', dpi=360)
-      plt.close()
-      self.logger.info('-')
+        for ant_i in unqAntID:
+            corresChans = [_[1] for _ in plotList if _[0] == ant_i]
+            for chan_i in corresChans:
+                self.plot_pol(dataFrame, axs[ant_i-1, chan_i-1], ant_i, chan_i, fitUniqueDays, norm, cmap)
+
+        for ax in axs.ravel():
+            ax.set_ylabel('RMS'); ax.set_ylim(-2,2)
+            #ax.set_xlabel('Azimuth [deg]')
+            ax.set_xlabel('Sidereal Time [h]')
+            ax.legend(fontsize=15)
+            ax.grid(True)
+
+        cbar = fig.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm), ax=axs, orientation='vertical',
+                            fraction=0.02, pad=0.06)
+        cbar.set_label('Date')
+        cbar.ax.yaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+
+        plt.suptitle(f'Galactic Noise\nFrequency band: {self.freqBand} MHz\n From {self.init_time} to {self.final_time}',
+                     fontsize=18, y=0.95)
+        plt.savefig(f'../plots/plots_icecube/fit_{self.init_time}_{self.final_time}_{self.freqBand}mhz.png', dpi=360)
+        plt.close()
+        #self.logger.info('-')
 
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--file', '-f', type=str, help='.npz file name', required=True)
 parser.add_argument('--stat', '-st', type=str, help='mean or median', required=False, default='mean')
-parser.add_argument('--init_time', '-ini', type=str, help='initial time -> YYYY-MM-DD', required=True)
-parser.add_argument('--final_time', '-fin', type=str, help='final time -> YYYY-MM-DD', required=True)
-parser.add_argument('--freq_band', '-freq', type=str, help='', required=False, default='70-150')
+parser.add_argument('--init_time', '-ini', type=str, help='initial time -> YYYY-MM-DD', required=False)
+parser.add_argument('--final_time', '-fin', type=str, help='final time -> YYYY-MM-DD', required=False)
 parser.add_argument('--use_time', '-t', type=str, help='sid or utc', required=False, default='sid')
 parser.add_argument('--fitUniqDays', '-fUD', type=str, help='Fit unique days', required=False, default=False)
 args = parser.parse_args()
 
-init_time = args.init_time
-final_time = args.final_time
+if not args.init_time or not args.final_time:
+    match = re.search(r'(\d{4}_\d{2}_\d{2})-(\d{4}_\d{2}_\d{2})', args.file)
+    init_time = match.group(1).replace('_', '-')
+    final_time = match.group(2).replace('_', '-')
+else:
+    init_time = args.init_time
+    final_time = args.final_time
 
 init = time.time()
-baseLoc = '/data/user/valeriatorres/galactic_noise/SouthPole/daily/'
+baseLoc  = '/data/user/valeriatorres/galactic_noise/SouthPole/'
+fileLoc = os.path.join(baseLoc, args.file)
 
-#==== The Magic Happens Here ====
-fit = fit_data(base_path=baseLoc, runStatType=args.stat, timeType=args.use_time, init_time=init_time, final_time=final_time, freqBand=args.freq_band)
+fit = fit_data(filename = fileLoc, runStatType = args.stat,
+               timeType = args.use_time, init_time = init_time,
+               final_time = final_time, freqBand = args.file.split('_')[-1][:-4])
 df = fit.process_data()
+#df = pd.read_hdf(f'/data/user/valeriatorres/galactic_noise/SouthPole/dfs/{None}_{None}.h5')
+#df.to_hdf(f'/data/user/valeriatorres/galactic_noise/SouthPole/dfs/{args.init_time}_{args.final_time}.h5', key='df', mode='w')
 
 print("=== Plotting ===")
 fit.plot_rms(dataFrame=df, plotAll=True, ant_ch_List=[[1,1],[1,2],[2,1]], fitUniqueDays=args.fitUniqDays)
